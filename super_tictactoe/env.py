@@ -16,7 +16,8 @@ LEVEL_ROW_RANGES = [(0, 3), (4, 7), (8, 11)]
 
 
 class SuperTicTacToeEnv:
-    def __init__(self):
+    def __init__(self, shaping_gamma: float = 0.99):
+        self.shaping_gamma = shaping_gamma
         self.valid_mask = self._build_valid_mask()
         self.board = np.zeros((12, 12), dtype=np.int8)
         self.current_player = 1
@@ -83,6 +84,59 @@ class SuperTicTacToeEnv:
         if row <= 7: return 1
         return 2
 
+    def _evaluate_board(self, player: int) -> float:
+        """
+        Potential function Φ(s) for PBRS.
+        Returns longest unblocked line length / 5, in [0, 1].
+        A line is unblocked if it contains no opponent pieces.
+        """
+        b = (self.board == player)
+        opp = (self.board == (3 - player))
+        best = 0
+
+        # Horizontal: windows of 4
+        for r in range(12):
+            for c in range(9):
+                if all(self.valid_mask[r, c+i] for i in range(4)):
+                    if not any(opp[r, c+i] for i in range(4)):
+                        count = sum(int(b[r, c+i]) for i in range(4))
+                        if count > best:
+                            best = count
+
+        # Vertical: windows of 4, cross-level only
+        for c in range(12):
+            for r in range(9):
+                cells = [(r+i, c) for i in range(4)]
+                if all(self.valid_mask[rr, cc] for rr, cc in cells):
+                    levels = {self._get_level(rr) for rr, _ in cells}
+                    if len(levels) >= 2:
+                        if not any(opp[rr, cc] for rr, cc in cells):
+                            count = sum(int(b[rr, cc]) for rr, cc in cells)
+                            if count > best:
+                                best = count
+
+        # Diagonal ↘: windows of 5
+        for r in range(8):
+            for c in range(8):
+                cells = [(r+i, c+i) for i in range(5)]
+                if all(self.valid_mask[rr, cc] for rr, cc in cells):
+                    if not any(opp[rr, cc] for rr, cc in cells):
+                        count = sum(int(b[rr, cc]) for rr, cc in cells)
+                        if count > best:
+                            best = count
+
+        # Diagonal ↙: windows of 5
+        for r in range(8):
+            for c in range(4, 12):
+                cells = [(r+i, c-i) for i in range(5)]
+                if all(self.valid_mask[rr, cc] for rr, cc in cells):
+                    if not any(opp[rr, cc] for rr, cc in cells):
+                        count = sum(int(b[rr, cc]) for rr, cc in cells)
+                        if count > best:
+                            best = count
+
+        return best / 5.0
+
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, dict]:
         """
         action: int in [0, 143] (row * 12 + col in 12×12 grid)
@@ -94,12 +148,16 @@ class SuperTicTacToeEnv:
         assert self.valid_mask[row, col], f"Action {action} targets padding cell ({row},{col})"
         assert self.board[row, col] == 0, f"Cell ({row},{col}) is already occupied"
 
+        phi_before = self._evaluate_board(self.current_player) if self.shaping_gamma > 0 else 0.0
+
         placed = self._stochastic_place(row, col)
         forfeited = placed == (None, None)
 
         if not forfeited:
             placed_row, placed_col = placed
             self.board[placed_row, placed_col] = self.current_player
+
+        phi_after = self._evaluate_board(self.current_player) if self.shaping_gamma > 0 else 0.0
 
         reward = 0.0
         if not forfeited and self._check_win(self.current_player):
@@ -108,6 +166,8 @@ class SuperTicTacToeEnv:
             self.winner = self.current_player
         elif np.all(self.board[self.valid_mask] != 0):
             self.done = True
+
+        reward += self.shaping_gamma * phi_after - phi_before
 
         info = {
             'forfeited': forfeited,

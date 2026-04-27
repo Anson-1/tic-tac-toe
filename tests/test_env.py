@@ -237,7 +237,7 @@ def test_step_win_terminates():
     action = 0 * 12 + 7  # (0, 7) → completes 4-in-row in G0
     with unittest.mock.patch('numpy.random.random', return_value=0.1):
         state, reward, done, info = env.step(action)
-    assert reward == 1.0
+    assert reward >= 1.0
     assert done
     assert env.winner == 1
 
@@ -267,3 +267,57 @@ def test_step_draw_when_board_full():
         _, reward, done, _ = env.step(action)
     assert done
     assert env.winner is None
+
+
+def test_evaluate_board_empty():
+    env = SuperTicTacToeEnv()
+    env.reset()
+    assert env._evaluate_board(1) == 0.0
+    assert env._evaluate_board(2) == 0.0
+
+def test_evaluate_board_increases_with_line():
+    env = SuperTicTacToeEnv()
+    env.reset()
+    env.board[0, 4] = 1
+    v1 = env._evaluate_board(1)
+    env.board[0, 5] = 1
+    v2 = env._evaluate_board(1)
+    env.board[0, 6] = 1
+    v3 = env._evaluate_board(1)
+    assert v1 < v2 < v3
+
+def test_evaluate_board_blocked_line_scores_lower():
+    env = SuperTicTacToeEnv()
+    env.reset()
+    env.board[0, 4] = 1
+    env.board[0, 5] = 1
+    env.board[0, 6] = 1
+    v_unblocked = env._evaluate_board(1)
+    env.board[0, 7] = 2  # opponent blocks the only 4-cell window
+    v_blocked = env._evaluate_board(1)
+    assert v_unblocked > v_blocked
+
+def test_step_shaping_positive_for_line_building():
+    """Building a line gives a positive reward even without a win."""
+    env = SuperTicTacToeEnv()
+    env.reset()
+    env.board[0, 4] = 1
+    env.board[0, 5] = 1
+    env.current_player = 1
+    action = 0 * 12 + 6  # extends to 3-in-a-row
+    with unittest.mock.patch('numpy.random.random', return_value=0.1):
+        _, reward, done, _ = env.step(action)
+    assert reward > 0
+    assert not done
+
+def test_step_shaping_gamma_zero_gives_sparse_reward():
+    """With shaping_gamma=0, step() reverts to sparse rewards."""
+    env = SuperTicTacToeEnv(shaping_gamma=0.0)
+    env.reset()
+    env.board[0, 4] = 1
+    env.board[0, 5] = 1
+    env.current_player = 1
+    action = 0 * 12 + 6  # no win
+    with unittest.mock.patch('numpy.random.random', return_value=0.1):
+        _, reward, _, _ = env.step(action)
+    assert reward == 0.0  # no shaping, no win → pure 0
