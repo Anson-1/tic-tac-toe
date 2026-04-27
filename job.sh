@@ -2,7 +2,7 @@
 #SBATCH --account=mscbdtsuperpod
 #SBATCH --partition=normal
 #SBATCH --gpus-per-node=1
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 #SBATCH --job-name=ttt-train
 #SBATCH --output=logs/train_%j.out
 #SBATCH --error=logs/train_%j.err
@@ -28,10 +28,11 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 # Run training
 python -m super_tictactoe.train \
-    --updates 1000 \
+    --updates 3000 \
     --episodes 512 \
     --device cuda \
     --save-every 100 \
+    --eval-every 100 \
     --checkpoint-dir checkpoints
 
 echo "Job finished: $(date)"
