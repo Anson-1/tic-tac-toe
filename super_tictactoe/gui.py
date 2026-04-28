@@ -20,6 +20,7 @@ COLORS = {
     'p1':        (80, 140, 220),   # blue X
     'p2':        (220, 80,  80),   # red O
     'win_line':  (255, 220,  50),
+    'forfeit':   (255, 140,   0),  # orange — intended cell that was forfeited
     'text':      (220, 220, 220),
 }
 
@@ -42,7 +43,7 @@ def window_size():
     return w, h
 
 
-def draw_board(screen, env, font, hover_cell=None, last_placed=None, message=""):
+def draw_board(screen, env, font, hover_cell=None, last_placed=None, forfeit_cell=None, message=""):
     screen.fill(COLORS['bg'])
 
     for r in range(12):
@@ -64,6 +65,8 @@ def draw_board(screen, env, font, hover_cell=None, last_placed=None, message="")
 
             if last_placed == (r, c):
                 pygame.draw.rect(screen, COLORS['win_line'], (x, y, CELL_SIZE, CELL_SIZE), 3, border_radius=4)
+            if forfeit_cell == (r, c):
+                pygame.draw.rect(screen, COLORS['forfeit'], (x, y, CELL_SIZE, CELL_SIZE), 3, border_radius=4)
 
     if env.done:
         status = f"Player {env.winner} wins!" if env.winner else "Draw!"
@@ -89,10 +92,13 @@ def get_cell_from_mouse(env, mx, my):
     return None
 
 
-def run_human_vs_agent(model_path: str, human_player: int = 1, device: str = 'cpu'):
+def run_human_vs_agent(model_path: str, human_player: int = 1, device: str = 'cpu',
+                       num_simulations: int = 0):
+    from super_tictactoe.mcts import MCTS
     model = ActorCritic().to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
+    mcts = MCTS(model, device=device, num_simulations=num_simulations) if num_simulations > 0 else None
 
     pygame.init()
     screen = pygame.display.set_mode(window_size())
@@ -104,41 +110,66 @@ def run_human_vs_agent(model_path: str, human_player: int = 1, device: str = 'cp
     state = env.reset()
     hover_cell = None
     last_placed = None
+    forfeit_cell = None
     message = ""
+    paused = False  # True while waiting for Space after a forfeit
 
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit()
 
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r:
+                    state = env.reset()
+                    last_placed = None
+                    forfeit_cell = None
+                    message = ""
+                    paused = False
+                elif event.key == pygame.K_SPACE and paused:
+                    paused = False
+                    forfeit_cell = None
+                    message = ""
+
             if event.type == pygame.MOUSEMOTION:
                 cell = get_cell_from_mouse(env, *event.pos)
                 hover_cell = cell if (cell and env.board[cell[0], cell[1]] == 0) else None
 
-            if event.type == pygame.MOUSEBUTTONDOWN and not env.done:
+            if event.type == pygame.MOUSEBUTTONDOWN and not env.done and not paused:
                 if env.current_player == human_player:
                     cell = get_cell_from_mouse(env, *event.pos)
                     if cell and env.get_action_mask()[cell[0] * 12 + cell[1]]:
                         action = cell[0] * 12 + cell[1]
                         state, _, _, info = env.step(action)
                         last_placed = info['placed']
-                        message = "Move forfeited!" if info['forfeited'] else ""
+                        if info['forfeited']:
+                            forfeit_cell = (action // 12, action % 12)
+                            message = "Your move forfeited! (drifted out of bounds)  [Space to continue]"
+                            paused = True
+                        else:
+                            forfeit_cell = None
+                            message = ""
 
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                state = env.reset()
-                last_placed = None
-                message = ""
-
-        if not env.done and env.current_player != human_player:
+        if not env.done and not paused and env.current_player != human_player:
             time.sleep(0.4)
-            action_mask = torch.BoolTensor(env.get_action_mask()).to(device)
-            state_tensor = torch.FloatTensor(state).to(device)
-            with torch.no_grad():
-                action, _, _ = model.get_action(state_tensor, action_mask)
+            if mcts:
+                action = mcts.get_action(env)
+            else:
+                action_mask = torch.BoolTensor(env.get_action_mask()).to(device)
+                state_tensor = torch.FloatTensor(state).to(device)
+                with torch.no_grad():
+                    action, _, _ = model.get_action(state_tensor, action_mask)
             state, _, _, info = env.step(action)
             last_placed = info['placed']
+            if info['forfeited']:
+                forfeit_cell = (action // 12, action % 12)
+                message = f"Agent forfeit! (intended {action // 12},{action % 12})  [Space to continue]"
+                paused = True
+            else:
+                forfeit_cell = None
+                message = ""
 
-        draw_board(screen, env, font, hover_cell, last_placed, message)
+        draw_board(screen, env, font, hover_cell, last_placed, forfeit_cell, message)
         clock.tick(30)
 
 
@@ -160,18 +191,30 @@ def run_agent_vs_agent(model1_path: str, model2_path: str, delay: float = 0.5, d
     env = SuperTicTacToeEnv()
     state = env.reset()
     last_placed = None
+    forfeit_cell = None
+    message = ""
+    paused = False
     last_move_time = time.time()
 
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit()
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                state = env.reset()
-                last_placed = None
-                last_move_time = time.time()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r:
+                    state = env.reset()
+                    last_placed = None
+                    forfeit_cell = None
+                    message = ""
+                    paused = False
+                    last_move_time = time.time()
+                elif event.key == pygame.K_SPACE and paused:
+                    paused = False
+                    forfeit_cell = None
+                    message = ""
+                    last_move_time = time.time()
 
-        if not env.done and time.time() - last_move_time >= delay:
+        if not env.done and not paused and time.time() - last_move_time >= delay:
             model = models[env.current_player]
             action_mask = torch.BoolTensor(env.get_action_mask()).to(device)
             state_tensor = torch.FloatTensor(state).to(device)
@@ -179,9 +222,16 @@ def run_agent_vs_agent(model1_path: str, model2_path: str, delay: float = 0.5, d
                 action, _, _ = model.get_action(state_tensor, action_mask)
             state, _, _, info = env.step(action)
             last_placed = info['placed']
-            last_move_time = time.time()
+            if info['forfeited']:
+                forfeit_cell = (action // 12, action % 12)
+                message = f"P{3 - env.current_player} forfeit! (intended {action // 12},{action % 12})  [Space to continue]"
+                paused = True
+            else:
+                forfeit_cell = None
+                message = ""
+                last_move_time = time.time()
 
-        draw_board(screen, env, font, last_placed=last_placed)
+        draw_board(screen, env, font, last_placed=last_placed, forfeit_cell=forfeit_cell, message=message)
         clock.tick(30)
 
 
@@ -193,9 +243,11 @@ if __name__ == '__main__':
     parser.add_argument('--model2', type=str, default='checkpoints/model_final.pt')
     parser.add_argument('--human-player', type=int, default=1, choices=[1, 2])
     parser.add_argument('--delay', type=float, default=0.5)
+    parser.add_argument('--simulations', type=int, default=0,
+                        help='MCTS simulations per move (0 = direct policy, no MCTS)')
     args = parser.parse_args()
 
     if args.mode == 'human':
-        run_human_vs_agent(args.model1, args.human_player)
+        run_human_vs_agent(args.model1, args.human_player, num_simulations=args.simulations)
     else:
         run_agent_vs_agent(args.model1, args.model2, args.delay)

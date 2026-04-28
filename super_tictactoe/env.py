@@ -60,8 +60,8 @@ class SuperTicTacToeEnv:
     def _stochastic_place(self, row: int, col: int) -> Tuple[Optional[int], Optional[int]]:
         """
         50%: returns (row, col).
-        50%: picks one of 8 adjacent cells uniformly within same sub-grid.
-             Returns (None, None) if out of sub-grid bounds or occupied.
+        50%: picks one of 8 adjacent cells uniformly.
+             Returns (None, None) if outside the valid playable area or occupied.
         """
         if np.random.random() < 0.5:
             return row, col
@@ -69,11 +69,9 @@ class SuperTicTacToeEnv:
         dr, dc = self._DIRECTIONS[np.random.randint(8)]
         new_row, new_col = row + dr, col + dc
 
-        grid_id = self._get_grid(row, col)
-        if grid_id is None:
+        if not (0 <= new_row < 12 and 0 <= new_col < 12):
             return None, None
-        r_start, c_start = GRID_POSITIONS[grid_id]
-        if not (r_start <= new_row < r_start + 4 and c_start <= new_col < c_start + 4):
+        if not self.valid_mask[new_row, new_col]:
             return None, None
         if self.board[new_row, new_col] != 0:
             return None, None

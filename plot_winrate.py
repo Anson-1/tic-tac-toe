@@ -11,16 +11,8 @@ from super_tictactoe.model import ActorCritic
 from super_tictactoe.evaluate import evaluate
 
 CHECKPOINTS = [
-    (100,  'checkpoints/model_0100.pt'),
-    (200,  'checkpoints/model_0200.pt'),
-    (300,  'checkpoints/model_0300.pt'),
-    (400,  'checkpoints/model_0400.pt'),
-    (500,  'checkpoints/model_0500.pt'),
-    (600,  'checkpoints/model_0600.pt'),
-    (700,  'checkpoints/model_0700.pt'),
-    (800,  'checkpoints/model_0800.pt'),
-    (900,  'checkpoints/model_0900.pt'),
-    (1000, 'checkpoints/model_1000.pt'),
+    (u, f'checkpoints/model_{u:04d}.pt')
+    for u in range(100, 3001, 100)
 ]
 N_GAMES = 200
 

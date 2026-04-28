@@ -118,7 +118,8 @@ def test_stochastic_occupied_neighbor_forfeits():
     """All valid neighbors occupied → only (0,4) or forfeit possible."""
     env = SuperTicTacToeEnv()
     env.reset()
-    # (0,4) is top-left corner of G0. Valid neighbors within G0: (0,5),(1,4),(1,5)
+    # (0,4) is top-left corner of G0. Valid reachable neighbors: (0,5),(1,4),(1,5)
+    # The rest are outside the 12x12 grid or padding cells.
     env.board[0, 5] = 1
     env.board[1, 4] = 1
     env.board[1, 5] = 1
