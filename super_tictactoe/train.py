@@ -21,7 +21,7 @@ def train(
     optimizer = torch.optim.Adam(model.parameters(), lr=base_lr)
 
     # Fixed reference model for best-checkpoint evaluation (random init, never updated)
-    reference = ActorCritic()
+    reference = ActorCritic().to(device)
     best_vs_reference = 0.0
     best_path = os.path.join(checkpoint_dir, 'model_best.pt')
 
