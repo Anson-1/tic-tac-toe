@@ -15,7 +15,7 @@
 # pip install pygame  # optional, GUI not used on cluster
 # ─────────────────────────────────────────────────────────────────────────────
 
-mkdir -p logs checkpoints
+mkdir -p logs checkpoints_ppo2
 
 # Activate conda environment
 source ~/miniconda3/etc/profile.d/conda.sh
@@ -32,7 +32,8 @@ python -m super_tictactoe.train \
     --episodes 512 \
     --device cuda \
     --save-every 100 \
-    --eval-every 100 \
-    --checkpoint-dir checkpoints
+    --checkpoint-dir checkpoints_ppo2 \
+    --pool-size 10 \
+    --pool-prob 0.5
 
 echo "Job finished: $(date)"

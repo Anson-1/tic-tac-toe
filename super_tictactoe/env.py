@@ -16,8 +16,15 @@ LEVEL_ROW_RANGES = [(0, 3), (4, 7), (8, 11)]
 
 
 class SuperTicTacToeEnv:
-    def __init__(self, shaping_gamma: float = 0.99):
+    def __init__(
+        self,
+        shaping_gamma: float = 0.99,
+        defense_weight: float = 0.5,
+        success_rate: float = 0.5,
+    ):
         self.shaping_gamma = shaping_gamma
+        self.defense_weight = defense_weight
+        self.success_rate = success_rate
         self.valid_mask = self._build_valid_mask()
         self.board = np.zeros((12, 12), dtype=np.int8)
         self.current_player = 1
@@ -63,7 +70,7 @@ class SuperTicTacToeEnv:
         50%: picks one of 8 adjacent cells uniformly.
              Returns (None, None) if outside the valid playable area or occupied.
         """
-        if np.random.random() < 0.5:
+        if np.random.random() < self.success_rate:
             return row, col
 
         dr, dc = self._DIRECTIONS[np.random.randint(8)]
@@ -135,6 +142,15 @@ class SuperTicTacToeEnv:
 
         return best / 5.0
 
+    def _combined_potential(self, player: int) -> float:
+        """
+        PBRS potential that rewards building lines AND blocking opponent.
+        Φ(s, player) = Φ_own(s) - defense_weight × Φ_opp(s)
+        """
+        own = self._evaluate_board(player)
+        opp = self._evaluate_board(3 - player)
+        return own - self.defense_weight * opp
+
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, dict]:
         """
         action: int in [0, 143] (row * 12 + col in 12×12 grid)
@@ -146,7 +162,7 @@ class SuperTicTacToeEnv:
         assert self.valid_mask[row, col], f"Action {action} targets padding cell ({row},{col})"
         assert self.board[row, col] == 0, f"Cell ({row},{col}) is already occupied"
 
-        phi_before = self._evaluate_board(self.current_player) if self.shaping_gamma > 0 else 0.0
+        phi_before = self._combined_potential(self.current_player) if self.shaping_gamma > 0 else 0.0
 
         placed = self._stochastic_place(row, col)
         forfeited = placed == (None, None)
@@ -155,7 +171,7 @@ class SuperTicTacToeEnv:
             placed_row, placed_col = placed
             self.board[placed_row, placed_col] = self.current_player
 
-        phi_after = self._evaluate_board(self.current_player) if self.shaping_gamma > 0 else 0.0
+        phi_after = self._combined_potential(self.current_player) if self.shaping_gamma > 0 else 0.0
 
         reward = 0.0
         if not forfeited and self._check_win(self.current_player):

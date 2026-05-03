@@ -9,13 +9,23 @@ from super_tictactoe.mcts import MCTS
 from super_tictactoe.evaluate import evaluate
 
 
-def self_play_game(mcts, temp_threshold=15):
+def curriculum_rate(step: int, total: int) -> float:
+    """Return success_rate for the current training iteration."""
+    if step < total / 3:
+        return 1.0   # Phase 1: deterministic
+    elif step < 2 * total / 3:
+        return 0.8   # Phase 2: mild stochasticity
+    else:
+        return 0.5   # Phase 3: full stochasticity
+
+
+def self_play_game(mcts, temp_threshold=15, success_rate=0.5):
     """
     Play one game with MCTS. Returns:
       - list of (state, mcts_policy, value) training examples
       - winner (1, 2, or None)
     """
-    env = SuperTicTacToeEnv()
+    env = SuperTicTacToeEnv(success_rate=success_rate)
     env.reset()
     examples = []
     step = 0
@@ -88,6 +98,7 @@ def train_alphazero(
     save_every: int = 10,
     eval_every: int = 10,
     init_from: str = '',
+    curriculum: bool = False,
 ):
     os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -106,10 +117,11 @@ def train_alphazero(
 
     for iteration in range(1, num_iterations + 1):
         # ── Self-play ────────────────────────────────────────────────────────
+        rate = curriculum_rate(iteration, num_iterations) if curriculum else 0.5
         model.eval()
         p1_wins = p2_wins = draws = 0
         for g in range(games_per_iteration):
-            data, winner = self_play_game(mcts, temp_threshold=15)
+            data, winner = self_play_game(mcts, temp_threshold=15, success_rate=rate)
             replay_buffer.extend(data)
             if winner == 1:   p1_wins += 1
             elif winner == 2: p2_wins += 1
@@ -121,6 +133,7 @@ def train_alphazero(
 
         n = games_per_iteration
         print(f"Iter {iteration:4d}/{num_iterations} | "
+              f"rate={rate:.1f} | "
               f"P1={p1_wins/n:.0%} P2={p2_wins/n:.0%} draw={draws/n:.0%} | "
               f"buffer={len(replay_buffer)}")
 
@@ -186,6 +199,8 @@ if __name__ == '__main__':
     parser.add_argument('--eval-every',   type=int,   default=10)
     parser.add_argument('--init-from',    type=str,   default='',
                         help='Optional: path to PPO checkpoint to warm-start from')
+    parser.add_argument('--curriculum', action='store_true',
+                        help='Enable curriculum learning (gradual stochasticity)')
     args = parser.parse_args()
 
     train_alphazero(
@@ -199,4 +214,5 @@ if __name__ == '__main__':
         save_every=args.save_every,
         eval_every=args.eval_every,
         init_from=args.init_from,
+        curriculum=args.curriculum,
     )

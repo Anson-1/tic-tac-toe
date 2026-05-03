@@ -322,3 +322,45 @@ def test_step_shaping_gamma_zero_gives_sparse_reward():
     with unittest.mock.patch('numpy.random.random', return_value=0.1):
         _, reward, _, _ = env.step(action)
     assert reward == 0.0  # no shaping, no win → pure 0
+
+
+def test_combined_potential_blocking_increases_reward():
+    """
+    Blocking the opponent's 3-in-a-row should give a positive shaped reward
+    when defense_weight > 0.
+    """
+    # Opponent (P2) has 3 pieces in a row; P1 blocks the 4th cell
+    env = SuperTicTacToeEnv(defense_weight=0.5)
+    env.reset()
+    env.board[0, 5] = 2  # P2 pieces threatening 4-in-a-row at (0,4)-(0,7)
+    env.board[0, 6] = 2
+    env.board[0, 7] = 2
+    env.current_player = 1
+    action = 0 * 12 + 4  # P1 blocks at (0,4)
+    with unittest.mock.patch('numpy.random.random', return_value=0.1):
+        _, reward, done, _ = env.step(action)
+    assert reward > 0  # blocking yields positive shaping reward
+    assert not done
+
+
+def test_combined_potential_defense_weight_zero_ignores_opponent():
+    """With defense_weight=0, combined_potential equals _evaluate_board (no blocking bonus)."""
+    env = SuperTicTacToeEnv(defense_weight=0.0)
+    env.reset()
+    env.board[0, 5] = 2
+    env.board[0, 6] = 2
+    env.board[0, 7] = 2
+    assert env._combined_potential(1) == env._evaluate_board(1)
+
+
+def test_combined_potential_increases_after_blocking():
+    """_combined_potential for P1 increases after blocking P2's threat."""
+    env = SuperTicTacToeEnv(defense_weight=0.5)
+    env.reset()
+    env.board[0, 5] = 2
+    env.board[0, 6] = 2
+    env.board[0, 7] = 2
+    phi_before = env._combined_potential(1)
+    env.board[0, 4] = 1  # P1 blocks
+    phi_after = env._combined_potential(1)
+    assert phi_after > phi_before

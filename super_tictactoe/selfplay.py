@@ -51,13 +51,21 @@ def collect_episode(
 
 
 def collect_episodes_vectorized(
-    n_envs: int, model: ActorCritic, device: str = 'cpu'
+    n_envs: int,
+    model: ActorCritic,
+    device: str = 'cpu',
+    opponent_model: ActorCritic = None,
+    success_rate: float = 0.5,
 ) -> List[List[Dict]]:
     """
     Run n_envs games simultaneously with one batched forward pass per step.
     Returns list of n_envs episodes, each a list of step dicts.
+
+    If opponent_model is provided, P1 uses model and P2 uses opponent_model.
+    Only P1 steps are stored in the training buffer (opponent is frozen).
+    If opponent_model is None, model plays both sides (standard self-play).
     """
-    envs = [SuperTicTacToeEnv() for _ in range(n_envs)]
+    envs = [SuperTicTacToeEnv(success_rate=success_rate) for _ in range(n_envs)]
     states = [env.reset() for env in envs]
     episodes: List[List[Dict]] = [[] for _ in range(n_envs)]
     done_flags = [False] * n_envs
@@ -65,35 +73,61 @@ def collect_episodes_vectorized(
     while not all(done_flags):
         active = [i for i, d in enumerate(done_flags) if not d]
 
-        batch_states = torch.FloatTensor(
-            np.array([states[i] for i in active])
-        ).to(device)
-        batch_masks = torch.BoolTensor(
-            np.array([envs[i].get_action_mask() for i in active])
-        ).to(device)
+        if opponent_model is not None:
+            # Split active envs by whose turn it is
+            p1_active = [i for i in active if envs[i].current_player == 1]
+            p2_active = [i for i in active if envs[i].current_player == 2]
+            groups = [(p1_active, model), (p2_active, opponent_model)]
+        else:
+            groups = [(active, model)]
 
-        with torch.no_grad():
-            probs, values = model(batch_states, batch_masks)
-            dist = torch.distributions.Categorical(probs)
-            action_tensors = dist.sample()
-            log_probs = dist.log_prob(action_tensors)
+        # Map from env index to (action, log_prob, value)
+        step_results = {}
 
-        for j, i in enumerate(active):
+        for group_indices, m in groups:
+            if not group_indices:
+                continue
+            batch_states = torch.FloatTensor(
+                np.array([states[i] for i in group_indices])
+            ).to(device)
+            batch_masks = torch.BoolTensor(
+                np.array([envs[i].get_action_mask() for i in group_indices])
+            ).to(device)
+
+            with torch.no_grad():
+                probs, values = m(batch_states, batch_masks)
+                dist = torch.distributions.Categorical(probs)
+                action_tensors = dist.sample()
+                log_probs = dist.log_prob(action_tensors)
+
+            for j, i in enumerate(group_indices):
+                step_results[i] = (
+                    action_tensors[j],
+                    log_probs[j],
+                    values[j],
+                    batch_masks[j],
+                )
+
+        for i in active:
+            action_t, log_prob_t, value_t, mask_t = step_results[i]
             player = envs[i].current_player
-            action = action_tensors[j].item()
+            action = action_t.item()
 
             next_state, reward, done, info = envs[i].step(action)
 
-            episodes[i].append({
-                'state': states[i],
-                'action_mask': batch_masks[j].cpu().numpy(),
-                'action': action,
-                'log_prob': log_probs[j].item(),
-                'value': values[j].item(),
-                'reward': reward,
-                'done': done,
-                'player': player,
-            })
+            # Only record steps for the training model (P1 when pool is active,
+            # or all steps in standard self-play)
+            if opponent_model is None or player == 1:
+                episodes[i].append({
+                    'state': states[i],
+                    'action_mask': mask_t.cpu().numpy(),
+                    'action': action,
+                    'log_prob': log_prob_t.item(),
+                    'value': value_t.item(),
+                    'reward': reward,
+                    'done': done,
+                    'player': player,
+                })
 
             if done:
                 done_flags[i] = True
