@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --account=mscbdtsuperpod
 #SBATCH --partition=normal
-#SBATCH --gpus-per-node=1
+#SBATCH --gpus-per-node=2
 #SBATCH --time=24:00:00
 #SBATCH --job-name=ttt-az-cl
 #SBATCH --output=logs/az_curriculum_%j.out

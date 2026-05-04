@@ -102,22 +102,20 @@ def main():
     # Discover available models
     agents_cfg = []
 
-    if os.path.exists('checkpoints/model_best.pt'):
-        agents_cfg.append(('PPO-best',   load('checkpoints/model_best.pt'),  False))
     if os.path.exists('checkpoints/model_final.pt'):
-        agents_cfg.append(('PPO-final',  load('checkpoints/model_final.pt'), False))
+        agents_cfg.append(('PPO-baseline',    load('checkpoints/model_final.pt'),        False))
+    if os.path.exists('checkpoints_ppo_cl/model_final.pt'):
+        agents_cfg.append(('PPO-curriculum',  load('checkpoints_ppo_cl/model_final.pt'), False))
     if os.path.exists('checkpoints_az/model_best.pt'):
-        agents_cfg.append(('AZ-best',    load('checkpoints_az/model_best.pt'), False))
+        agents_cfg.append(('AZ-best',         load('checkpoints_az/model_best.pt'),      False))
     if os.path.exists('checkpoints_az/model_final.pt'):
-        agents_cfg.append(('AZ-final',   load('checkpoints_az/model_final.pt'), False))
+        agents_cfg.append(('AZ-final',        load('checkpoints_az/model_final.pt'),     False))
+    if os.path.exists('checkpoints_az_cl/model_best.pt'):
+        agents_cfg.append(('AZ-curriculum',   load('checkpoints_az_cl/model_best.pt'),   False))
 
     if not agents_cfg:
         print("No checkpoints found.")
         return
-
-    # Add MCTS-enhanced version of best available model
-    best_model = agents_cfg[0][1]
-    agents_cfg.append(('PPO-best+MCTS20', best_model, True))
 
     print(f"Agents: {[a[0] for a in agents_cfg]}")
     print(f"Games per matchup: {N_GAMES}\n")

@@ -2,6 +2,7 @@ import os
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torch.multiprocessing as mp
 from collections import deque
 from super_tictactoe.model import ActorCritic
 from super_tictactoe.env import SuperTicTacToeEnv
@@ -17,6 +18,23 @@ def curriculum_rate(step: int, total: int) -> float:
         return 0.8   # Phase 2: mild stochasticity
     else:
         return 0.5   # Phase 3: full stochasticity
+
+
+def _self_play_worker(args):
+    """
+    Top-level worker for parallel self-play (must be module-level to be picklable).
+    Each worker runs on its own GPU and returns a list of (training_data, winner).
+    """
+    cpu_state_dict, n_games, num_simulations, temp_threshold, success_rate, device_str = args
+    model = ActorCritic().to(device_str)
+    model.load_state_dict({k: v.to(device_str) for k, v in cpu_state_dict.items()})
+    model.eval()
+    mcts = MCTS(model, device=device_str, num_simulations=num_simulations)
+    results = []
+    for _ in range(n_games):
+        data, winner = self_play_game(mcts, temp_threshold=temp_threshold, success_rate=success_rate)
+        results.append((data, winner))
+    return results
 
 
 def self_play_game(mcts, temp_threshold=15, success_rate=0.5):
@@ -115,21 +133,50 @@ def train_alphazero(
     best_vs_reference = 0.0
     best_path = os.path.join(checkpoint_dir, 'model_best.pt')
 
+    # Multi-GPU parallel self-play: each GPU runs its own MCTS worker
+    n_gpus = torch.cuda.device_count() if device == 'cuda' else 0
+    if n_gpus > 1:
+        print(f"Using {n_gpus} GPUs for parallel self-play")
+        ctx = mp.get_context('spawn')
+        pool = ctx.Pool(n_gpus)
+    else:
+        pool = None
+
     for iteration in range(1, num_iterations + 1):
         # ── Self-play ────────────────────────────────────────────────────────
         rate = curriculum_rate(iteration, num_iterations) if curriculum else 0.5
         model.eval()
         p1_wins = p2_wins = draws = 0
-        for g in range(games_per_iteration):
-            data, winner = self_play_game(mcts, temp_threshold=15, success_rate=rate)
+
+        if pool is not None:
+            # Distribute games evenly across GPUs
+            base = games_per_iteration // n_gpus
+            rem  = games_per_iteration % n_gpus
+            cpu_sd = {k: v.cpu() for k, v in model.state_dict().items()}
+            worker_args = [
+                (cpu_sd, base + (1 if i < rem else 0),
+                 num_simulations, 15, rate, f'cuda:{i}')
+                for i in range(n_gpus)
+            ]
+            print(f"Iter {iteration:4d}/{num_iterations} | self-play ({n_gpus} GPUs)...",
+                  end='\r', flush=True)
+            raw = pool.map(_self_play_worker, worker_args)
+            game_results = [item for sublist in raw for item in sublist]
+        else:
+            game_results = []
+            for g in range(games_per_iteration):
+                data, winner = self_play_game(mcts, temp_threshold=15, success_rate=rate)
+                game_results.append((data, winner))
+                print(f"Iter {iteration:4d}/{num_iterations} | "
+                      f"game {g+1:3d}/{games_per_iteration} | "
+                      f"buffer={len(replay_buffer)}",
+                      end='\r', flush=True)
+
+        for data, winner in game_results:
             replay_buffer.extend(data)
             if winner == 1:   p1_wins += 1
             elif winner == 2: p2_wins += 1
             else:             draws   += 1
-            print(f"Iter {iteration:4d}/{num_iterations} | "
-                  f"game {g+1:3d}/{games_per_iteration} | "
-                  f"buffer={len(replay_buffer)}",
-                  end='\r', flush=True)
 
         n = games_per_iteration
         print(f"Iter {iteration:4d}/{num_iterations} | "
@@ -177,6 +224,10 @@ def train_alphazero(
                 print("  ← new best!")
             else:
                 print()
+
+    if pool is not None:
+        pool.close()
+        pool.join()
 
     final_path = os.path.join(checkpoint_dir, 'model_final.pt')
     torch.save(model.state_dict(), final_path)
