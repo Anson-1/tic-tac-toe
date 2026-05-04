@@ -73,18 +73,26 @@ def collect_episodes_vectorized(
     while not all(done_flags):
         active = [i for i, d in enumerate(done_flags) if not d]
 
+        is_heuristic = (
+            opponent_model is not None
+            and callable(opponent_model)
+            and not isinstance(opponent_model, torch.nn.Module)
+        )
+
         if opponent_model is not None:
-            # Split active envs by whose turn it is
             p1_active = [i for i in active if envs[i].current_player == 1]
             p2_active = [i for i in active if envs[i].current_player == 2]
-            groups = [(p1_active, model), (p2_active, opponent_model)]
+            nn_groups = [(p1_active, model)]
+            if not is_heuristic:
+                nn_groups.append((p2_active, opponent_model))
         else:
-            groups = [(active, model)]
+            p2_active = []
+            nn_groups = [(active, model)]
 
-        # Map from env index to (action, log_prob, value)
+        # Map from env index to (action, log_prob, value, mask)
         step_results = {}
 
-        for group_indices, m in groups:
+        for group_indices, m in nn_groups:
             if not group_indices:
                 continue
             batch_states = torch.FloatTensor(
@@ -106,6 +114,18 @@ def collect_episodes_vectorized(
                     log_probs[j],
                     values[j],
                     batch_masks[j],
+                )
+
+        # Heuristic P2: call directly, no batching needed
+        if is_heuristic:
+            for i in p2_active:
+                action = opponent_model(envs[i])
+                mask_t = torch.BoolTensor(envs[i].get_action_mask()).to(device)
+                step_results[i] = (
+                    torch.tensor(action),
+                    torch.tensor(0.0),
+                    torch.tensor(0.0),
+                    mask_t,
                 )
 
         for i in active:

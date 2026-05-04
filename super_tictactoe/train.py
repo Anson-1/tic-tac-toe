@@ -8,6 +8,7 @@ from collections import deque
 from super_tictactoe.model import ActorCritic
 from super_tictactoe.selfplay import collect_episodes_vectorized, build_buffer
 from super_tictactoe.ppo import ppo_update
+from super_tictactoe.heuristics import blocking_agent
 
 
 def curriculum_rate(step: int, total: int) -> float:
@@ -29,14 +30,23 @@ def train(
     pool_size: int = 10,
     pool_prob: float = 0.5,
     curriculum: bool = False,
+    heuristic_prob: float = 0.0,
+    resume: str = None,
+    lr: float = 3e-4,
 ):
     """
-    pool_size: max number of past checkpoints kept in the opponent pool.
-    pool_prob: probability of drawing an opponent from the pool each update.
-    curriculum: if True, gradually increase stochasticity during training.
+    pool_size:      max past checkpoints in opponent pool.
+    pool_prob:      probability of using a pool opponent each update.
+    curriculum:     gradually increase stochasticity during training.
+    heuristic_prob: probability of using blocking heuristic as opponent.
+                    Draws from pool first, then heuristic, then self-play.
     """
     os.makedirs(checkpoint_dir, exist_ok=True)
     model = ActorCritic().to(device)
+
+    if resume:
+        model.load_state_dict(torch.load(resume, map_location=device))
+        print(f"Resumed from checkpoint: {resume}")
 
     # Wrap with DataParallel if multiple GPUs are available
     n_gpus = torch.cuda.device_count() if device == 'cuda' else 0
@@ -47,7 +57,7 @@ def train(
     # raw_model is the underlying ActorCritic (unwrapped) used for saving/pool
     raw_model = model.module if isinstance(model, nn.DataParallel) else model
 
-    base_lr = 3e-4
+    base_lr = lr
     optimizer = torch.optim.Adam(model.parameters(), lr=base_lr)
 
     # Opponent pool: deque of state_dicts (CPU tensors to save GPU memory)
@@ -63,14 +73,17 @@ def train(
         # Curriculum: success_rate increases stochasticity across phases
         rate = curriculum_rate(update, num_updates) if curriculum else 0.5
 
-        # Select opponent: pool checkpoint or self-play
-        if pool and random.random() < pool_prob:
+        # Select opponent: pool checkpoint, blocking heuristic, or self-play
+        roll = random.random()
+        if pool and roll < pool_prob:
             state_dict = random.choice(pool)
             opponent_model.load_state_dict(
                 {k: v.to(device) for k, v in state_dict.items()}
             )
             opponent_model.eval()
             opp = opponent_model
+        elif roll < pool_prob + heuristic_prob:
+            opp = blocking_agent  # callable heuristic
         else:
             opp = None  # standard self-play
 
@@ -125,6 +138,12 @@ if __name__ == '__main__':
                         help='Probability of using a pool opponent each update')
     parser.add_argument('--curriculum', action='store_true',
                         help='Enable curriculum learning (gradual stochasticity)')
+    parser.add_argument('--heuristic-prob', type=float, default=0.0,
+                        help='Probability of using blocking heuristic as opponent')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Path to checkpoint to resume from')
+    parser.add_argument('--lr', type=float, default=3e-4,
+                        help='Base learning rate (decays 10x over training)')
     args = parser.parse_args()
 
     train(
@@ -136,4 +155,7 @@ if __name__ == '__main__':
         pool_size=args.pool_size,
         pool_prob=args.pool_prob,
         curriculum=args.curriculum,
+        heuristic_prob=args.heuristic_prob,
+        resume=args.resume,
+        lr=args.lr,
     )
