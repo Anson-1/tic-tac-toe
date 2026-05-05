@@ -289,11 +289,16 @@ def main():
     if os.path.exists('checkpoints_az/model_final.pt'):
         agents_cfg.append(('AZ-final',           load('checkpoints_az/model_final.pt'),     False))
     if os.path.exists('checkpoints_az_cl/model_best.pt'):
-        agents_cfg.append(('AZ-curriculum',      load('checkpoints_az_cl/model_best.pt'),   False))
+        m = load('checkpoints_az_cl/model_best.pt')
+        agents_cfg.append(('AZ-curriculum',      m, False))
+        agents_cfg.append(('AZ-curriculum+MCTS', m, True))
     if os.path.exists('checkpoints_ppo_heuristic/model_final.pt'):
         m = load('checkpoints_ppo_heuristic/model_final.pt')
         agents_cfg.append(('PPO-heuristic',      m, False))
         agents_cfg.append(('PPO-heuristic+MCTS', m, True))
+    if os.path.exists('checkpoints_ppo_finetune/model_final.pt'):
+        m = load('checkpoints_ppo_finetune/model_final.pt')
+        agents_cfg.append(('PPO-finetune',       m, False))
     if os.path.exists('checkpoints_ppo_phase2/model_final.pt'):
         m = load('checkpoints_ppo_phase2/model_final.pt')
         agents_cfg.append(('PPO-phase2',         m, False))
