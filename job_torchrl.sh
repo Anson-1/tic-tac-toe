@@ -7,7 +7,6 @@
 #SBATCH --output=logs/torchrl_%j.out
 #SBATCH --error=logs/torchrl_%j.err
 
-cd $SLURM_SUBMIT_DIR
 mkdir -p logs
 
 source ~/miniconda3/etc/profile.d/conda.sh
