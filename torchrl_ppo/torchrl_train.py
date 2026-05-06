@@ -132,7 +132,7 @@ def collect_rollout(
     ac: ActorCritic,
     opponent_fn,
     n_episodes: int = 256,
-    success_rate: float = 0.5,
+    success_rate: float = 1.0,
 ):
     """
     Fast vectorized data collection: runs n_episodes games in parallel with
