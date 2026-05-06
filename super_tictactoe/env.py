@@ -19,10 +19,10 @@ class SuperTicTacToeEnv:
     def __init__(
         self,
         shaping_gamma: float = 0.99,
-        defense_weight: float = 0.5,
+        defense_weight: float = 1.5,
         success_rate: float = 0.5,
     ):
-        self.shaping_gamma = shaping_gamma
+        self.shaping_gamma  = shaping_gamma
         self.defense_weight = defense_weight
         self.success_rate = success_rate
         self.valid_mask = self._build_valid_mask()
@@ -150,6 +150,51 @@ class SuperTicTacToeEnv:
         own = self._evaluate_board(player)
         opp = self._evaluate_board(3 - player)
         return own - self.defense_weight * opp
+
+    def _count_threats(self, player: int) -> int:
+        """Count unblocked windows where player has >= 2 pieces (active threats)."""
+        me  = (self.board == player)
+        opp = (self.board == (3 - player))
+        count = 0
+
+        # Horizontal (4)
+        for r in range(12):
+            for c in range(9):
+                if all(self.valid_mask[r, c+i] for i in range(4)):
+                    if not any(opp[r, c+i] for i in range(4)):
+                        if sum(int(me[r, c+i]) for i in range(4)) >= 2:
+                            count += 1
+
+        # Vertical cross-level (4)
+        for c in range(12):
+            for r in range(9):
+                cells = [(r+i, c) for i in range(4)]
+                if all(self.valid_mask[rr, cc] for rr, cc in cells):
+                    levels = {self._get_level(rr) for rr, _ in cells}
+                    if len(levels) >= 2:
+                        if not any(opp[rr, cc] for rr, cc in cells):
+                            if sum(int(me[rr, cc]) for rr, cc in cells) >= 2:
+                                count += 1
+
+        # Diagonal ↘ (5)
+        for r in range(8):
+            for c in range(8):
+                cells = [(r+i, c+i) for i in range(5)]
+                if all(self.valid_mask[rr, cc] for rr, cc in cells):
+                    if not any(opp[rr, cc] for rr, cc in cells):
+                        if sum(int(me[rr, cc]) for rr, cc in cells) >= 2:
+                            count += 1
+
+        # Diagonal ↙ (5)
+        for r in range(8):
+            for c in range(4, 12):
+                cells = [(r+i, c-i) for i in range(5)]
+                if all(self.valid_mask[rr, cc] for rr, cc in cells):
+                    if not any(opp[rr, cc] for rr, cc in cells):
+                        if sum(int(me[rr, cc]) for rr, cc in cells) >= 2:
+                            count += 1
+
+        return count
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, dict]:
         """

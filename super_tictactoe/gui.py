@@ -173,6 +173,171 @@ def run_human_vs_agent(model_path: str, human_player: int = 1, device: str = 'cp
         clock.tick(30)
 
 
+def run_agent_vs_heuristic(model_path: str, heuristic_name: str = 'blocking',
+                            agent_player: int = 1, delay: float = 0.5, device: str = 'cpu'):
+    from super_tictactoe.heuristics import greedy_agent, blocking_agent, safe_agent
+    import random as _random
+    import numpy as _np
+
+    def random_agent(env):
+        mask = env.get_action_mask()
+        valid = _np.where(mask)[0]
+        return int(_random.choice(valid))
+
+    heuristics = {
+        'random':   random_agent,
+        'greedy':   greedy_agent,
+        'blocking': blocking_agent,
+        'safe':     safe_agent,
+    }
+    if heuristic_name not in heuristics:
+        print(f"Unknown heuristic '{heuristic_name}'. Choose: {list(heuristics)}")
+        return
+    heuristic = heuristics[heuristic_name]
+
+    model = ActorCritic().to(device)
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+
+    heuristic_player = 3 - agent_player
+
+    pygame.init()
+    screen = pygame.display.set_mode(window_size())
+    pygame.display.set_caption(
+        f"Super Tic-Tac-Toe — PPO (P{agent_player}) vs {heuristic_name.capitalize()} (P{heuristic_player})"
+    )
+    font   = pygame.font.SysFont('monospace', 18)
+    sfont  = pygame.font.SysFont('monospace', 14)
+    clock  = pygame.time.Clock()
+
+    wins   = {agent_player: 0, heuristic_player: 0, 'draw': 0}
+    game_n = 0
+
+    env   = SuperTicTacToeEnv()
+    state = env.reset()
+    last_placed  = None
+    forfeit_cell = None
+    paused       = False
+    last_move_time = time.time()
+    auto_restart = True   # restart automatically after a game ends
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r:
+                    state = env.reset()
+                    last_placed  = None
+                    forfeit_cell = None
+                    paused       = False
+                    last_move_time = time.time()
+                elif event.key == pygame.K_SPACE:
+                    paused = not paused
+                    last_move_time = time.time()
+                elif event.key == pygame.K_a:
+                    auto_restart = not auto_restart
+
+        # Auto-restart when game ends
+        if env.done and auto_restart and time.time() - last_move_time >= delay * 2:
+            if env.winner:
+                wins[env.winner] += 1
+            else:
+                wins['draw'] += 1
+            game_n += 1
+            state = env.reset()
+            last_placed  = None
+            forfeit_cell = None
+            last_move_time = time.time()
+
+        if not env.done and not paused and time.time() - last_move_time >= delay:
+            who = "PPO" if env.current_player == agent_player else heuristic_name.capitalize()
+            intended_r, intended_c = None, None
+
+            if env.current_player == agent_player:
+                action_mask  = torch.BoolTensor(env.get_action_mask()).to(device)
+                state_tensor = torch.FloatTensor(state).to(device)
+                with torch.no_grad():
+                    action, _, _ = model.get_action(state_tensor, action_mask)
+            else:
+                action = heuristic(env)
+
+            intended_r, intended_c = action // 12, action % 12
+            state, _, _, info = env.step(action)
+            last_placed = info['placed']
+
+            if info['forfeited']:
+                forfeit_cell = (intended_r, intended_c)
+                print(f"[Game {game_n+1}] FORFEIT  {who} (P{env.current_player ^ 3}) "
+                      f"intended ({intended_r},{intended_c}) → drifted out/occupied, turn wasted")
+                paused = True
+            else:
+                placed_r, placed_c = info['placed']
+                drifted = (placed_r != intended_r or placed_c != intended_c)
+                drift_str = f"→ drifted to ({placed_r},{placed_c})" if drifted else "→ landed exactly"
+                print(f"[Game {game_n+1}] MOVE     {who} (P{env.current_player ^ 3}) "
+                      f"intended ({intended_r},{intended_c}) {drift_str}"
+                      + (f"  WIN!" if env.done and env.winner else ""))
+                forfeit_cell = None
+
+            last_move_time = time.time()
+
+        # Draw
+        screen.fill(COLORS['bg'])
+
+        for r in range(12):
+            for c in range(12):
+                if not env.valid_mask[r, c]:
+                    continue
+                x, y  = cell_pixel(r, c)
+                color = COLORS['cell']
+                pygame.draw.rect(screen, color, (x, y, CELL_SIZE, CELL_SIZE), border_radius=4)
+
+                piece = env.board[r, c]
+                cx, cy = x + CELL_SIZE // 2, y + CELL_SIZE // 2
+                if piece == 1:
+                    off = CELL_SIZE // 3
+                    pygame.draw.line(screen, COLORS['p1'], (cx-off, cy-off), (cx+off, cy+off), 3)
+                    pygame.draw.line(screen, COLORS['p1'], (cx+off, cy-off), (cx-off, cy+off), 3)
+                elif piece == 2:
+                    pygame.draw.circle(screen, COLORS['p2'], (cx, cy), CELL_SIZE // 3, 3)
+
+                if last_placed == (r, c):
+                    pygame.draw.rect(screen, COLORS['win_line'], (x, y, CELL_SIZE, CELL_SIZE), 3, border_radius=4)
+                if forfeit_cell == (r, c):
+                    pygame.draw.rect(screen, COLORS['forfeit'], (x, y, CELL_SIZE, CELL_SIZE), 3, border_radius=4)
+
+        # Status bar
+        _, h = window_size()
+        y0 = h - INFO_HEIGHT + 6
+        if env.done:
+            if env.winner == agent_player:
+                msg = "PPO wins!"
+            elif env.winner == heuristic_player:
+                msg = f"{heuristic_name.capitalize()} wins!"
+            else:
+                msg = "Draw!"
+        elif paused and forfeit_cell:
+            msg = f"FORFEIT at ({forfeit_cell[0]},{forfeit_cell[1]}) — orange cell — Space to resume"
+        elif paused:
+            msg = "PAUSED — Space to resume"
+        else:
+            who = "PPO" if env.current_player == agent_player else heuristic_name.capitalize()
+            msg = f"{who}'s turn (P{env.current_player})"
+
+        screen.blit(font.render(msg, True, COLORS['text']), (MARGIN, y0))
+
+        score_str = (f"Game {game_n+1}  |  "
+                     f"PPO: {wins[agent_player]}  "
+                     f"{heuristic_name.capitalize()}: {wins[heuristic_player]}  "
+                     f"Draw: {wins['draw']}  |  "
+                     f"[R] restart  [Space] pause  [A] auto={'ON' if auto_restart else 'OFF'}")
+        screen.blit(sfont.render(score_str, True, COLORS['text']), (MARGIN, y0 + 22))
+
+        pygame.display.flip()
+        clock.tick(30)
+
+
 def run_agent_vs_agent(model1_path: str, model2_path: str, delay: float = 0.5, device: str = 'cpu'):
     def load(path):
         m = ActorCritic().to(device)
@@ -238,10 +403,15 @@ def run_agent_vs_agent(model1_path: str, model2_path: str, delay: float = 0.5, d
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['human', 'agent'])
+    parser.add_argument('mode', choices=['human', 'agent', 'heuristic'])
     parser.add_argument('--model1', type=str, default='checkpoints/model_final.pt')
     parser.add_argument('--model2', type=str, default='checkpoints/model_final.pt')
     parser.add_argument('--human-player', type=int, default=1, choices=[1, 2])
+    parser.add_argument('--agent-player', type=int, default=1, choices=[1, 2],
+                        help='Which player slot the PPO agent occupies (heuristic mode)')
+    parser.add_argument('--heuristic', type=str, default='blocking',
+                        choices=['random', 'greedy', 'blocking', 'safe'],
+                        help='Heuristic opponent (heuristic mode)')
     parser.add_argument('--delay', type=float, default=0.5)
     parser.add_argument('--simulations', type=int, default=0,
                         help='MCTS simulations per move (0 = direct policy, no MCTS)')
@@ -249,5 +419,7 @@ if __name__ == '__main__':
 
     if args.mode == 'human':
         run_human_vs_agent(args.model1, args.human_player, num_simulations=args.simulations)
+    elif args.mode == 'heuristic':
+        run_agent_vs_heuristic(args.model1, args.heuristic, args.agent_player, args.delay)
     else:
         run_agent_vs_agent(args.model1, args.model2, args.delay)

@@ -39,7 +39,7 @@ def ppo_update(
     buffer: Dict,
     epochs: int = 4,
     clip_eps: float = 0.2,
-    entropy_coef: float = 0.01,
+    entropy_coef: float = 0.05,
     value_coef: float = 0.5,
 ) -> Dict[str, float]:
     """Run PPO update over the collected buffer."""

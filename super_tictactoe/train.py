@@ -8,7 +8,7 @@ from collections import deque
 from super_tictactoe.model import ActorCritic
 from super_tictactoe.selfplay import collect_episodes_vectorized, build_buffer
 from super_tictactoe.ppo import ppo_update
-from super_tictactoe.heuristics import blocking_agent
+from super_tictactoe.heuristics import random_heuristic
 
 
 def curriculum_rate(step: int, total: int) -> float:
@@ -64,6 +64,12 @@ def train(
     pool: deque = deque(maxlen=pool_size)
     opponent_model = ActorCritic().to(device)
 
+    # Pre-seed pool with resume checkpoint so it faces its previous best from update 1
+    if resume:
+        seed_weights = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
+        pool.append(seed_weights)
+        print(f"Pool pre-seeded with resume checkpoint ({len(pool)} entry)")
+
     for update in range(1, num_updates + 1):
         # Linear learning rate decay: 3e-4 → 3e-5
         lr = base_lr * (1 - 0.9 * update / num_updates)
@@ -83,7 +89,7 @@ def train(
             opponent_model.eval()
             opp = opponent_model
         elif roll < pool_prob + heuristic_prob:
-            opp = blocking_agent  # callable heuristic
+            opp = random_heuristic  # randomly sampled heuristic
         else:
             opp = None  # standard self-play
 

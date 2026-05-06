@@ -1,8 +1,3 @@
-# Model checkpoints
-checkpoints/
-*.pt
-*.pth
-
 # Python
 __pycache__/
 *.pyc
@@ -21,7 +16,7 @@ env/
 .mypy_cache/
 .ruff_cache/
 
-# Logs and outputs
+# Logs
 logs/
 *.log
 
