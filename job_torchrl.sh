@@ -1,12 +1,13 @@
 #!/bin/bash
 #SBATCH --account=mscbdtsuperpod
 #SBATCH --partition=normal
-#SBATCH --gpus-per-node=1
+#SBATCH --cpus-per-task=4
 #SBATCH --time=24:00:00
 #SBATCH --job-name=ttt-torchrl
 #SBATCH --output=logs/torchrl_%j.out
 #SBATCH --error=logs/torchrl_%j.err
 
+cd $SLURM_SUBMIT_DIR
 mkdir -p logs
 
 source ~/miniconda3/etc/profile.d/conda.sh
@@ -24,7 +25,7 @@ python torchrl_dqn/torchrl_dqn_train.py \
     --lr 1e-3 \
     --eval-every 50 \
     --checkpoint-dir torchrl_dqn/checkpoints \
-    --device cuda
+    --device cpu
 
 echo "DQN finished: $(date)"
 
@@ -36,7 +37,7 @@ python torchrl_a2c/torchrl_a2c_train.py \
     --lr 3e-4 \
     --eval-every 50 \
     --checkpoint-dir torchrl_a2c/checkpoints \
-    --device cuda
+    --device cpu
 
 echo "A2C finished: $(date)"
 echo "All done: $(date)"
