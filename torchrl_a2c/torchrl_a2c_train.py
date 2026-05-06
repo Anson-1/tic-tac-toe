@@ -6,8 +6,11 @@ Uses GAE for advantage estimation and a shared backbone for actor+critic.
 """
 
 import os
+import sys
 import argparse
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 import torch.nn as nn
 import matplotlib
@@ -234,14 +237,16 @@ def train(
     eval_games: int = 50,
     checkpoint_dir: str = "torchrl_a2c/checkpoints",
     resume: str = None,
+    device: str = "cpu",
 ):
     os.makedirs(checkpoint_dir, exist_ok=True)
+    device = torch.device(device)
 
     env = SuperTicTacToeTorchEnv(opponent_fn=random_heuristic)
 
-    ac = ActorCritic()
+    ac = ActorCritic().to(device)
     if resume:
-        ac.load_state_dict(torch.load(resume, map_location="cpu"))
+        ac.load_state_dict(torch.load(resume, map_location=device))
         print(f"Resumed from: {resume}")
     actor, critic = make_modules(ac, env.action_spec)
 
@@ -281,8 +286,11 @@ def train(
 
         opponent_fn = CURRICULUM_OPPONENTS[current_phase]
 
-        # Collect data
+        # Collect data (on CPU since env is CPU-based)
+        ac.cpu()
         data, stats = collect_rollout(ac, opponent_fn, n_episodes=episodes_per_update)
+        ac.to(device)
+        data = data.to(device)
 
         # Compute GAE
         with torch.no_grad():
@@ -377,6 +385,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval-every", type=int, default=50)
     parser.add_argument("--checkpoint-dir", type=str, default="torchrl_a2c/checkpoints")
     parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--device", type=str, default="cpu")
     args = parser.parse_args()
 
     train(
@@ -386,4 +395,5 @@ if __name__ == "__main__":
         eval_every=args.eval_every,
         checkpoint_dir=args.checkpoint_dir,
         resume=args.resume,
+        device=args.device,
     )

@@ -6,8 +6,11 @@ experience replay, and a target network for stability.
 """
 
 import os
+import sys
 import argparse
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -201,13 +204,15 @@ def train(
     eval_games: int = 50,
     checkpoint_dir: str = "torchrl_dqn/checkpoints",
     resume: str = None,
+    device: str = "cpu",
 ):
     os.makedirs(checkpoint_dir, exist_ok=True)
+    device = torch.device(device)
 
-    q_net = QNetwork()
-    target_net = QNetwork()
+    q_net = QNetwork().to(device)
+    target_net = QNetwork().to(device)
     if resume:
-        q_net.load_state_dict(torch.load(resume, map_location="cpu"))
+        q_net.load_state_dict(torch.load(resume, map_location=device))
         print(f"Resumed from: {resume}")
     target_net.load_state_dict(q_net.state_dict())
 
@@ -247,17 +252,19 @@ def train(
             epsilon_start - (epsilon_start - epsilon_end) * update / decay_updates
         )
 
-        # Collect data
+        # Collect data (on CPU since env is CPU-based)
+        q_net_cpu = q_net.cpu()
         data, stats = collect_episodes(
-            q_net, opponent_fn, n_episodes=episodes_per_update, epsilon=epsilon
+            q_net_cpu, opponent_fn, n_episodes=episodes_per_update, epsilon=epsilon
         )
+        q_net.to(device)
         replay_buffer.extend(data)
 
         # Train on mini-batches
         losses = []
         if len(replay_buffer) >= batch_size:
             for _ in range(4):
-                batch = replay_buffer.sample()
+                batch = replay_buffer.sample().to(device)
                 obs = batch["observation"]
                 actions = batch["action"]
                 rewards_b = batch["reward"]
@@ -360,6 +367,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval-every", type=int, default=50)
     parser.add_argument("--checkpoint-dir", type=str, default="torchrl_dqn/checkpoints")
     parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--device", type=str, default="cpu")
     args = parser.parse_args()
 
     train(
@@ -370,4 +378,5 @@ if __name__ == "__main__":
         eval_every=args.eval_every,
         checkpoint_dir=args.checkpoint_dir,
         resume=args.resume,
+        device=args.device,
     )

@@ -15,7 +15,7 @@ conda activate tictactoe
 echo "Job started: $(date)"
 echo "Node: $(hostname)"
 
-# Train DQN (1000 updates, ~64 episodes each)
+# Train DQN (1000 updates)
 echo "=== Starting DQN training ==="
 python torchrl_dqn/torchrl_dqn_train.py \
     --num-updates 1000 \
@@ -23,18 +23,20 @@ python torchrl_dqn/torchrl_dqn_train.py \
     --batch-size 512 \
     --lr 1e-3 \
     --eval-every 50 \
-    --checkpoint-dir torchrl_dqn/checkpoints
+    --checkpoint-dir torchrl_dqn/checkpoints \
+    --device cuda
 
 echo "DQN finished: $(date)"
 
-# Train A2C (1000 updates, ~64 episodes each)
+# Train A2C (1000 updates)
 echo "=== Starting A2C training ==="
 python torchrl_a2c/torchrl_a2c_train.py \
     --num-updates 1000 \
     --episodes 128 \
     --lr 3e-4 \
     --eval-every 50 \
-    --checkpoint-dir torchrl_a2c/checkpoints
+    --checkpoint-dir torchrl_a2c/checkpoints \
+    --device cuda
 
 echo "A2C finished: $(date)"
 echo "All done: $(date)"
