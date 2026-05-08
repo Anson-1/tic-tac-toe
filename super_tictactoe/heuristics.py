@@ -227,6 +227,47 @@ def counter_heuristic(env):
     return greedy_agent(env)
 
 
+def horizontal_agent(env):
+    """Always prioritise building horizontal lines. Win/block first, then extend longest row."""
+    mask = env.get_action_mask()
+    valid = np.where(mask)[0]
+    me = env.current_player
+    opp = 3 - me
+
+    # Win immediately
+    for a in valid:
+        r, c = a // 12, a % 12
+        env.board[r, c] = me
+        if env._check_win(me):
+            env.board[r, c] = 0
+            return int(a)
+        env.board[r, c] = 0
+
+    # Block opponent win
+    for a in valid:
+        r, c = a // 12, a % 12
+        env.board[r, c] = opp
+        if env._check_win(opp):
+            env.board[r, c] = 0
+            return int(a)
+        env.board[r, c] = 0
+
+    # Score each valid cell by how many of own pieces are in its row (within valid cells)
+    best_a, best_score = valid[0], -1
+    for a in valid:
+        r, c = a // 12, a % 12
+        score = 0
+        for dc in range(-3, 4):
+            nc = c + dc
+            if dc == 0:
+                continue
+            if 0 <= nc < 12 and env.valid_mask[r, nc] and env.board[r, nc] == me:
+                score += 1
+        if score > best_score:
+            best_score, best_a = score, a
+    return int(best_a)
+
+
 HEURISTIC_POOL = [
     (greedy_agent,      0.20),
     (blocking_agent,    0.35),

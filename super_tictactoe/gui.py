@@ -400,18 +400,105 @@ def run_agent_vs_agent(model1_path: str, model2_path: str, delay: float = 0.5, d
         clock.tick(30)
 
 
+def run_human_vs_heuristic(heuristic_name: str = 'horizontal', human_player: int = 1):
+    from super_tictactoe.heuristics import (
+        greedy_agent, blocking_agent, safe_agent, horizontal_agent,
+    )
+    import random as _random
+
+    def random_agent(env):
+        mask = env.get_action_mask()
+        valid = np.where(mask)[0]
+        return int(_random.choice(valid))
+
+    heuristics = {
+        'random': random_agent,
+        'greedy': greedy_agent,
+        'blocking': blocking_agent,
+        'safe': safe_agent,
+        'horizontal': horizontal_agent,
+    }
+    heuristic = heuristics[heuristic_name]
+
+    pygame.init()
+    screen = pygame.display.set_mode(window_size())
+    pygame.display.set_caption(f"Super Tic-Tac-Toe — Human vs {heuristic_name.capitalize()}")
+    font = pygame.font.SysFont('monospace', 18)
+    clock = pygame.time.Clock()
+
+    env = SuperTicTacToeEnv()
+    state = env.reset()
+    hover_cell = None
+    last_placed = None
+    forfeit_cell = None
+    message = ""
+    paused = False
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); sys.exit()
+
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r:
+                    state = env.reset()
+                    last_placed = None
+                    forfeit_cell = None
+                    message = ""
+                    paused = False
+                elif event.key == pygame.K_SPACE and paused:
+                    paused = False
+                    forfeit_cell = None
+                    message = ""
+
+            if event.type == pygame.MOUSEMOTION:
+                cell = get_cell_from_mouse(env, *event.pos)
+                hover_cell = cell if (cell and env.board[cell[0], cell[1]] == 0) else None
+
+            if event.type == pygame.MOUSEBUTTONDOWN and not env.done and not paused:
+                if env.current_player == human_player:
+                    cell = get_cell_from_mouse(env, *event.pos)
+                    if cell and env.get_action_mask()[cell[0] * 12 + cell[1]]:
+                        action = cell[0] * 12 + cell[1]
+                        state, _, _, info = env.step(action)
+                        last_placed = info['placed']
+                        if info['forfeited']:
+                            forfeit_cell = (action // 12, action % 12)
+                            message = "Your move forfeited!  [Space to continue]"
+                            paused = True
+                        else:
+                            forfeit_cell = None
+                            message = ""
+
+        if not env.done and not paused and env.current_player != human_player:
+            time.sleep(0.4)
+            action = heuristic(env)
+            state, _, _, info = env.step(action)
+            last_placed = info['placed']
+            if info['forfeited']:
+                forfeit_cell = (action // 12, action % 12)
+                message = f"{heuristic_name.capitalize()} forfeit!  [Space to continue]"
+                paused = True
+            else:
+                forfeit_cell = None
+                message = ""
+
+        draw_board(screen, env, font, hover_cell, last_placed, forfeit_cell, message)
+        clock.tick(30)
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['human', 'agent', 'heuristic'])
+    parser.add_argument('mode', choices=['human', 'agent', 'heuristic', 'human_vs_heuristic'])
     parser.add_argument('--model1', type=str, default='checkpoints/model_final.pt')
     parser.add_argument('--model2', type=str, default='checkpoints/model_final.pt')
     parser.add_argument('--human-player', type=int, default=1, choices=[1, 2])
     parser.add_argument('--agent-player', type=int, default=1, choices=[1, 2],
                         help='Which player slot the PPO agent occupies (heuristic mode)')
     parser.add_argument('--heuristic', type=str, default='blocking',
-                        choices=['random', 'greedy', 'blocking', 'safe'],
-                        help='Heuristic opponent (heuristic mode)')
+                        choices=['random', 'greedy', 'blocking', 'safe', 'horizontal'],
+                        help='Heuristic opponent')
     parser.add_argument('--delay', type=float, default=0.5)
     parser.add_argument('--simulations', type=int, default=0,
                         help='MCTS simulations per move (0 = direct policy, no MCTS)')
@@ -421,5 +508,7 @@ if __name__ == '__main__':
         run_human_vs_agent(args.model1, args.human_player, num_simulations=args.simulations)
     elif args.mode == 'heuristic':
         run_agent_vs_heuristic(args.model1, args.heuristic, args.agent_player, args.delay)
+    elif args.mode == 'human_vs_heuristic':
+        run_human_vs_heuristic(args.heuristic, args.human_player)
     else:
         run_agent_vs_agent(args.model1, args.model2, args.delay)

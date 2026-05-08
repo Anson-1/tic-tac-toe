@@ -1,11 +1,15 @@
 """Quick evaluation of AZ-curriculum vs heuristic opponents."""
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 import torch
 from super_tictactoe.model import ActorCritic
 from super_tictactoe.env import SuperTicTacToeEnv
 from super_tictactoe.mcts import MCTS
 from compare import (play_games, greedy_agent, blocking_agent,
-                     safe_agent, one_step_lookahead_agent, random_agent)
+                     safe_agent, horizontal_agent, random_agent)
 
 N_GAMES = 200
 
@@ -34,7 +38,7 @@ def mcts_agent(model, simulations=50):
     return agent
 
 
-m = load('checkpoints_az_cl/model_best.pt')
+m = load(os.path.join(os.path.dirname(__file__), 'checkpoints/model_best.pt'))
 agents = [
     ('AZ-curriculum',       model_agent(m)),
     ('AZ-curriculum+MCTS',  mcts_agent(m, 50)),
@@ -45,7 +49,7 @@ heuristics = [
     ('Greedy',         greedy_agent),
     ('Blocking',       blocking_agent),
     ('Safe',           safe_agent),
-    ('1-step lookahead', one_step_lookahead_agent),
+    ('Horizontal',     horizontal_agent),
 ]
 
 print(f"{'Agent':<22} {'Opponent':<18} {'win':>5}  {'loss':>5}")

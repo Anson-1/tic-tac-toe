@@ -30,7 +30,7 @@ from super_tictactoe.env import SuperTicTacToeEnv
 from super_tictactoe.model import ActorCritic
 from super_tictactoe.torchrl_env import SuperTicTacToeTorchEnv
 from super_tictactoe.heuristics import (
-    random_heuristic, greedy_agent, blocking_agent,
+    random_heuristic, greedy_agent, blocking_agent, horizontal_agent,
 )
 
 
@@ -115,8 +115,8 @@ def _fast_random_agent(env):
     return int(valid[np.random.randint(len(valid))])
 
 
-CURRICULUM_OPPONENTS = [_fast_random_agent, greedy_agent, blocking_agent]
-CURRICULUM_NAMES = ["random", "greedy", "blocking"]
+CURRICULUM_OPPONENTS = [_fast_random_agent, horizontal_agent, greedy_agent, blocking_agent]
+CURRICULUM_NAMES = ["random", "horizontal", "greedy", "blocking"]
 
 
 # ── Fast vectorized rollout ───────────────────────────────────────────────────
@@ -126,10 +126,14 @@ def collect_rollout(
     opponent_fn,
     n_episodes: int = 256,
     success_rate: float = 0.5,
+    selfplay_prob: float = 0.0,
 ):
     """
     Fast vectorized data collection: runs n_episodes games in parallel with
-    batched forward passes. Agent (P1) vs heuristic (P2).
+    batched forward passes. Agent (P1) vs opponent (P2).
+
+    If selfplay_prob > 0, each game has that probability of being self-play
+    (agent plays both sides) instead of using opponent_fn.
 
     Returns: (TensorDict, stats_dict)
         TensorDict: flat transitions ready for GAE + ClipPPOLoss
@@ -138,6 +142,8 @@ def collect_rollout(
     envs = [SuperTicTacToeEnv(success_rate=success_rate) for _ in range(n_episodes)]
     states = [env.reset() for env in envs]
     done_flags = [False] * n_episodes
+    # Decide per-game whether it's self-play
+    is_selfplay = [np.random.random() < selfplay_prob for _ in range(n_episodes)]
 
     observations = []
     action_masks = []
@@ -179,7 +185,18 @@ def collect_rollout(
 
             # Opponent plays if game not over
             if not done:
-                opp_action = opponent_fn(envs[i])
+                if is_selfplay[i]:
+                    # Self-play: use the model for P2 as well
+                    opp_state = torch.FloatTensor(next_state).unsqueeze(0)
+                    opp_mask = torch.BoolTensor(
+                        envs[i].get_action_mask()
+                    ).unsqueeze(0)
+                    with torch.no_grad():
+                        opp_probs, _ = ac(opp_state, opp_mask)
+                        opp_dist = torch.distributions.Categorical(opp_probs)
+                        opp_action = opp_dist.sample().item()
+                else:
+                    opp_action = opponent_fn(envs[i])
                 next_state, _, done, _ = envs[i].step(opp_action)
                 if done and envs[i].winner == 2:
                     reward = -1.0
@@ -269,6 +286,7 @@ def train(
     checkpoint_dir: str = "torchrl_ppo/checkpoints",
     resume: str = None,
     device: str = "cpu",
+    selfplay_prob: float = 0.0,
 ):
     os.makedirs(checkpoint_dir, exist_ok=True)
     device = torch.device(device)
@@ -290,8 +308,8 @@ def train(
         critic_network=critic,
         clip_epsilon=clip_eps,
         entropy_bonus=True,
-        entropy_coef=entropy_coef,
-        critic_coef=critic_coef,
+        entropy_coeff=entropy_coef,
+        critic_coeff=critic_coef,
         normalize_advantage=True,
         loss_critic_type="l2",
     )
@@ -338,11 +356,16 @@ def train(
             print(f"Resumed weights only from: {resume}")
 
     opponent_fn = CURRICULUM_OPPONENTS[current_phase]
-    print(f"Training phase {current_phase + 1}/3: opponent = {CURRICULUM_NAMES[current_phase]}")
+    n_phases = len(CURRICULUM_NAMES)
+    print(f"Training phase {current_phase + 1}/{n_phases}: opponent = {CURRICULUM_NAMES[current_phase]}"
+          + (f" + {selfplay_prob:.0%} self-play" if selfplay_prob > 0 else ""))
 
     for update in range(start_update, num_updates + 1):
         ac.cpu()
-        data, stats = collect_rollout(ac, opponent_fn, n_episodes=episodes_per_update)
+        data, stats = collect_rollout(
+            ac, opponent_fn, n_episodes=episodes_per_update,
+            selfplay_prob=selfplay_prob,
+        )
         ac.to(device)
         data = data.to(device)
 
@@ -451,8 +474,8 @@ def train(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TorchRL PPO for Super Tic-Tac-Toe")
     parser.add_argument("--num-updates", type=int, default=500)
-    parser.add_argument("--phase", type=int, default=0, choices=[0, 1, 2],
-                        help="Curriculum phase: 0=random, 1=greedy, 2=blocking")
+    parser.add_argument("--phase", type=int, default=0, choices=[0, 1, 2, 3],
+                        help="Curriculum phase: 0=random, 1=greedy, 2=blocking, 3=horizontal")
     parser.add_argument("--episodes", type=int, default=128)
     parser.add_argument("--ppo-epochs", type=int, default=4)
     parser.add_argument("--mini-batch", type=int, default=512)
@@ -461,6 +484,8 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint-dir", type=str, default="torchrl_ppo/checkpoints")
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--selfplay-prob", type=float, default=0.0,
+                        help="Probability of self-play per game (0=pure heuristic, 1=pure self-play)")
     args = parser.parse_args()
 
     train(
@@ -474,4 +499,5 @@ if __name__ == "__main__":
         checkpoint_dir=args.checkpoint_dir,
         resume=args.resume,
         device=args.device,
+        selfplay_prob=args.selfplay_prob,
     )

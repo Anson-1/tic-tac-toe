@@ -4,6 +4,9 @@ Tests each saved checkpoint against random, blocking heuristic, and the final mo
 Computes Elo to show whether training actually improved the agent over time.
 """
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 import torch
 import matplotlib
@@ -33,11 +36,14 @@ def model_agent(model):
 
 
 # Pick evenly spaced checkpoints from PPO-curriculum
-ckpt_dir = 'checkpoints_ppo_cl'
+ckpt_dir = os.path.join(os.path.dirname(__file__), 'checkpoints')
 all_ckpts = sorted([f for f in os.listdir(ckpt_dir) if f.startswith('model_0')])
 # Sample ~6 checkpoints evenly
-indices = np.linspace(0, len(all_ckpts) - 1, 6, dtype=int)
-checkpoints = [all_ckpts[i] for i in indices]
+if all_ckpts:
+    indices = np.linspace(0, len(all_ckpts) - 1, min(6, len(all_ckpts)), dtype=int)
+    checkpoints = [all_ckpts[i] for i in indices]
+else:
+    checkpoints = []
 checkpoints.append('model_final.pt')
 
 print(f"{'Checkpoint':<18} {'vs Random':>10} {'vs Greedy':>10} {'vs Blocking':>12} {'avg_steps':>10}")
@@ -84,5 +90,6 @@ ax2.set_ylabel('Avg steps per game')
 ax2.set_title('Game Length (longer = more strategic)')
 
 plt.tight_layout()
-plt.savefig('ppo_progress.png', dpi=150)
-print("\nSaved ppo_progress.png")
+out_path = os.path.join(os.path.dirname(__file__), 'ppo_progress.png')
+plt.savefig(out_path, dpi=150)
+print(f"\nSaved {out_path}")

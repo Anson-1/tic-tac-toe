@@ -51,9 +51,17 @@ class MCTS:
         return value
 
     def run(self, env) -> np.ndarray:
-        """Run simulations from current env state. Returns visit-count policy over 144 actions."""
+        """Run simulations from current env state. Returns visit-count policy over 144 actions.
+
+        Uses deterministic placement (success_rate=1.0) inside the search tree
+        so that the tree structure is valid — same action always leads to the same
+        state. The real game's stochasticity is handled externally.
+        """
         root = MCTSNode()
+        # Create a deterministic copy for planning — tree requires consistent transitions
         root_env = copy.deepcopy(env)
+        root_env.success_rate = 1.0
+        root_env.shaping_gamma = 0  # no reward shaping during planning
         self._expand(root, root_env)
 
         for _ in range(self.num_simulations):
@@ -62,8 +70,6 @@ class MCTS:
             path = [node]
 
             # Selection: follow UCB until reaching an unexpanded leaf or terminal.
-            # Validate against sim_env's action mask — stochastic drift from earlier
-            # moves can occupy a cell that was open when the node was first expanded.
             while not node.is_leaf() and not sim_env.done:
                 action_mask = sim_env.get_action_mask()
                 valid = {a: c for a, c in node.children.items() if action_mask[a]}

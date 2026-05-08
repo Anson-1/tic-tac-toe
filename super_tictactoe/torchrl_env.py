@@ -2,12 +2,20 @@ import numpy as np
 import torch
 from tensordict import TensorDict
 from torchrl.envs import EnvBase
-from torchrl.data import (
-    CompositeSpec as Composite,
-    UnboundedContinuousTensorSpec as Unbounded,
-    DiscreteTensorSpec as Categorical,
-    BinaryDiscreteTensorSpec as Binary,
-)
+try:
+    from torchrl.data import (
+        Composite,
+        Unbounded,
+        Categorical,
+        Binary,
+    )
+except ImportError:
+    from torchrl.data import (
+        CompositeSpec as Composite,
+        UnboundedContinuousTensorSpec as Unbounded,
+        DiscreteTensorSpec as Categorical,
+        BinaryDiscreteTensorSpec as Binary,
+    )
 
 from super_tictactoe.env import SuperTicTacToeEnv
 from super_tictactoe.heuristics import random_heuristic
