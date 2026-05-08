@@ -50,8 +50,9 @@ class QNetwork(nn.Module):
         if np.random.random() < epsilon:
             valid = torch.where(mask)[0]
             return int(valid[np.random.randint(len(valid))].item())
+        device = next(self.parameters()).device
         with torch.no_grad():
-            q = self.forward(state.unsqueeze(0)).squeeze(0)
+            q = self.forward(state.unsqueeze(0).to(device)).squeeze(0).cpu()
             q[~mask] = float('-inf')
             return int(q.argmax().item())
 
@@ -68,12 +69,6 @@ CURRICULUM_OPPONENTS = [_fast_random_agent, greedy_agent, blocking_agent]
 CURRICULUM_NAMES = ["random", "greedy", "blocking"]
 
 
-def get_phase(update: int, total_updates: int) -> int:
-    if update < total_updates / 3:
-        return 0
-    if update < 2 * total_updates / 3:
-        return 1
-    return 2
 
 
 # ── Data collection ───────────────────────────────────────────────────────────
@@ -169,8 +164,8 @@ def collect_episodes(
 
 # ── Evaluation ────────────────────────────────────────────────────────────────
 
-def eval_vs_blocking(q_net: QNetwork, n_games: int = 100) -> float:
-    env = SuperTicTacToeEnv(success_rate=0.5)
+def eval_vs_opponent(q_net: QNetwork, opponent_fn, n_games: int = 100, success_rate: float = 0.5) -> float:
+    env = SuperTicTacToeEnv(success_rate=success_rate)
     wins = 0
     for _ in range(n_games):
         state = env.reset()
@@ -180,7 +175,7 @@ def eval_vs_blocking(q_net: QNetwork, n_games: int = 100) -> float:
                 m = torch.BoolTensor(env.get_action_mask())
                 action = q_net.get_action(s, m, epsilon=0.0)
             else:
-                action = blocking_agent(env)
+                action = opponent_fn(env)
             state, _, _, _ = env.step(action)
         if env.winner == 1:
             wins += 1
@@ -190,7 +185,8 @@ def eval_vs_blocking(q_net: QNetwork, n_games: int = 100) -> float:
 # ── Training ──────────────────────────────────────────────────────────────────
 
 def train(
-    num_updates: int = 1000,
+    num_updates: int = 500,
+    phase: int = 0,
     episodes_per_update: int = 64,
     batch_size: int = 256,
     lr: float = 1e-3,
@@ -208,14 +204,11 @@ def train(
 ):
     os.makedirs(checkpoint_dir, exist_ok=True)
     device = torch.device(device)
+    phase_dir = os.path.join(checkpoint_dir, f"phase{phase}_{CURRICULUM_NAMES[phase]}")
+    os.makedirs(phase_dir, exist_ok=True)
 
     q_net = QNetwork().to(device)
     target_net = QNetwork().to(device)
-    if resume:
-        q_net.load_state_dict(torch.load(resume, map_location=device))
-        print(f"Resumed from: {resume}")
-    target_net.load_state_dict(q_net.state_dict())
-
     optimizer = torch.optim.Adam(q_net.parameters(), lr=lr)
 
     replay_buffer = TensorDictReplayBuffer(
@@ -223,8 +216,9 @@ def train(
         batch_size=batch_size,
     )
 
+    current_phase = phase
     best_win_rate = 0.0
-    current_phase = 0
+    start_update = 1
 
     # Tracking for plots
     history_updates = []
@@ -233,20 +227,48 @@ def train(
     history_eval_updates = []
     history_eval_win_rate = []
 
-    for update in range(1, num_updates + 1):
-        # Curriculum
-        new_phase = get_phase(update, num_updates)
-        if new_phase != current_phase:
-            current_phase = new_phase
-            print(
-                f"\n[Curriculum] Phase {current_phase + 1}: "
-                f"opponent = {CURRICULUM_NAMES[current_phase]}"
-            )
+    if resume:
+        ckpt = torch.load(resume, map_location=device)
+        if isinstance(ckpt, dict) and "model" in ckpt:
+            q_net.load_state_dict(ckpt["model"])
+            target_net.load_state_dict(ckpt["target"])
+            optimizer.load_state_dict(ckpt["optimizer"])
+            saved_phase = ckpt.get("phase", phase)
+            if phase != saved_phase:
+                # New phase: keep model weights, reset optimizer and counters
+                start_update = 1
+                current_phase = phase
+                best_win_rate = 0.0
+                print(f"New phase detected — optimizer reset, history cleared.")
+            else:
+                # Same phase: resume mid-run with full state
+                optimizer.load_state_dict(ckpt["optimizer"])
+                start_update = ckpt["update"] + 1
+                current_phase = saved_phase
+                best_win_rate = ckpt.get("best_win_rate", 0.0)
+                history_updates = ckpt.get("history_updates", [])
+                history_win_rate = ckpt.get("history_win_rate", [])
+                history_loss = ckpt.get("history_loss", [])
+                history_eval_updates = ckpt.get("history_eval_updates", [])
+                history_eval_win_rate = ckpt.get("history_eval_win_rate", [])
+            history_updates = ckpt.get("history_updates", [])
+            history_win_rate = ckpt.get("history_win_rate", [])
+            history_loss = ckpt.get("history_loss", [])
+            history_eval_updates = ckpt.get("history_eval_updates", [])
+            history_eval_win_rate = ckpt.get("history_eval_win_rate", [])
+            print(f"Resumed from update {start_update - 1}, phase={CURRICULUM_NAMES[current_phase]}: {resume}")
+        else:
+            q_net.load_state_dict(ckpt)
+            target_net.load_state_dict(q_net.state_dict())
+            print(f"Resumed weights only from: {resume}")
 
-        opponent_fn = CURRICULUM_OPPONENTS[current_phase]
+    opponent_fn = CURRICULUM_OPPONENTS[current_phase]
+    print(f"Training phase {current_phase + 1}/3: opponent = {CURRICULUM_NAMES[current_phase]}")
 
-        # Epsilon schedule
-        decay_updates = int(num_updates * epsilon_decay_frac)
+    # Epsilon resets fresh for each phase
+    decay_updates = int(num_updates * epsilon_decay_frac)
+
+    for update in range(start_update, num_updates + 1):
         epsilon = max(
             epsilon_end,
             epsilon_start - (epsilon_start - epsilon_end) * update / decay_updates
@@ -255,7 +277,8 @@ def train(
         # Collect data (on CPU since env is CPU-based)
         q_net_cpu = q_net.cpu()
         data, stats = collect_episodes(
-            q_net_cpu, opponent_fn, n_episodes=episodes_per_update, epsilon=epsilon
+            q_net_cpu, opponent_fn, n_episodes=episodes_per_update, epsilon=epsilon,
+            success_rate=0.5,
         )
         q_net.to(device)
         replay_buffer.extend(data)
@@ -312,25 +335,52 @@ def train(
             end="",
         )
 
-        # Evaluation
+        # Periodic checkpoint for resuming
+        if update % 100 == 0:
+            ckpt = {
+                "model": q_net.state_dict(),
+                "target": target_net.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "update": update,
+                "phase": current_phase,
+                "best_win_rate": best_win_rate,
+                "history_updates": history_updates,
+                "history_win_rate": history_win_rate,
+                "history_loss": history_loss,
+                "history_eval_updates": history_eval_updates,
+                "history_eval_win_rate": history_eval_win_rate,
+            }
+            torch.save(ckpt, os.path.join(phase_dir, "checkpoint.pt"))
+
+        # Evaluation vs current opponent
         if update % eval_every == 0:
-            win_rate = eval_vs_blocking(q_net, n_games=eval_games)
+            win_rate = eval_vs_opponent(q_net, opponent_fn, n_games=eval_games)
             history_eval_updates.append(update)
             history_eval_win_rate.append(win_rate)
-            print(f" | win_vs_blocking={win_rate:.0%}", end="")
+            print(f" | win_vs_{CURRICULUM_NAMES[current_phase]}={win_rate:.0%}", end="")
             if win_rate > best_win_rate:
                 best_win_rate = win_rate
-                torch.save(
-                    q_net.state_dict(),
-                    os.path.join(checkpoint_dir, "model_best.pt"),
-                )
+                torch.save(q_net.state_dict(), os.path.join(phase_dir, "model_best.pt"))
                 print(" <- best!", end="")
 
         print()
 
-    # Save final checkpoint
-    torch.save(q_net.state_dict(), os.path.join(checkpoint_dir, "model_final.pt"))
-    print(f"\nDone. Best win rate vs blocking: {best_win_rate:.0%}")
+    # Save final checkpoint + resume state
+    final_ckpt = {
+        "model": q_net.state_dict(),
+        "target": target_net.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "update": num_updates,
+        "phase": current_phase,
+        "best_win_rate": best_win_rate,
+        "history_updates": history_updates,
+        "history_win_rate": history_win_rate,
+        "history_loss": history_loss,
+        "history_eval_updates": history_eval_updates,
+        "history_eval_win_rate": history_eval_win_rate,
+    }
+    torch.save(final_ckpt, os.path.join(phase_dir, "model_final.pt"))
+    print(f"\nDone. Best win rate vs {CURRICULUM_NAMES[current_phase]}: {best_win_rate:.0%}")
 
     # Save training curve
     fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
@@ -350,7 +400,7 @@ def train(
     axes[1].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plot_path = os.path.join(checkpoint_dir, "training_curve.png")
+    plot_path = os.path.join(phase_dir, "training_curve.png")
     fig.savefig(plot_path, dpi=150)
     plt.close(fig)
     print(f"Training curve saved to: {plot_path}")
@@ -360,7 +410,10 @@ def train(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TorchRL DQN for Super Tic-Tac-Toe")
-    parser.add_argument("--num-updates", type=int, default=1000)
+    parser.add_argument("--num-updates", type=int, default=500)
+    parser.add_argument("--epsilon-start", type=float, default=1.0)
+    parser.add_argument("--phase", type=int, default=0, choices=[0, 1, 2],
+                        help="Curriculum phase: 0=random, 1=greedy, 2=blocking")
     parser.add_argument("--episodes", type=int, default=64)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -372,6 +425,8 @@ if __name__ == "__main__":
 
     train(
         num_updates=args.num_updates,
+        phase=args.phase,
+        epsilon_start=args.epsilon_start,
         episodes_per_update=args.episodes,
         batch_size=args.batch_size,
         lr=args.lr,

@@ -3,10 +3,10 @@ import torch
 from tensordict import TensorDict
 from torchrl.envs import EnvBase
 from torchrl.data import (
-    Composite,
-    Unbounded,
-    Categorical,
-    Binary,
+    CompositeSpec as Composite,
+    UnboundedContinuousTensorSpec as Unbounded,
+    DiscreteTensorSpec as Categorical,
+    BinaryDiscreteTensorSpec as Binary,
 )
 
 from super_tictactoe.env import SuperTicTacToeEnv
