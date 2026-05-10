@@ -131,7 +131,7 @@ Smoothing the raw training signals (window=15) reveals the underlying trends mor
 ### Policy Heatmap — Opening Move Preferences
 ![Policy Heatmap](analysis_policy_heatmap.png)
 
-Visualising π(a|s) on the empty board reveals how each agent's learned strategy differs. PPO Curriculum converges to a near-deterministic opening (entropy H(π)=0.00), always playing a single preferred cell — evidence of a fully committed, confident strategy. PPO Baseline retains slightly more spread (H(π)=0.18), reflecting broader self-play exploration. The AlphaZero policy is more distributed (H(π)=1.23), consistent with an agent that has not converged to a strong opening strategy. The value estimate on the empty board V(s₀) also tells a clear story: PPO Curriculum (0.970) and PPO Baseline (1.424) both correctly estimate a winning advantage for the first player, while AlphaZero (−0.191) incorrectly believes it is losing from the start — a direct consequence of the corrupted value function from stochastic MCTS training.
+Visualising π(a|s) on the empty board reveals how each agent's learned strategy differs. PPO Curriculum converges to a near-deterministic opening (entropy H(π)=0.00), always playing a single preferred cell — evidence of a fully committed, confident strategy. PPO Baseline retains slightly more spread (H(π)=0.18), reflecting broader self-play exploration. The AlphaZero policy is more distributed (H(π)=1.23), consistent with an agent that has not converged to a strong opening strategy.
 
 ### DQN Q-Value Distribution
 ![Q-Value Distribution](analysis_qvalue_distribution.png)
