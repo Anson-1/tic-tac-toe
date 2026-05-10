@@ -123,6 +123,21 @@ The DQN training curve shows two clear phases. The win rate increases monotonica
 
 The PPO training curve shows three metrics. The win rate increases from ~50% to ~70% over 200 updates with high variance due to the small episode count per update. The actor loss oscillates tightly around zero with small magnitude (±0.004), which is expected — the PPO clipped surrogate objective constrains the probability ratio `r_t(θ) = π_θ(a|s) / π_θ_old(a|s)` to stay near 1, preventing large destructive updates. The critic loss decreases from ~0.25 to ~0.12 over training, reflecting the value network converging toward V^π(s) — still well above zero after 200 updates, consistent with the limited training budget.
 
+### Smoothed Training Dynamics
+![Training Dynamics](analysis_training_curves.png)
+
+Smoothing the raw training signals (window=15) reveals the underlying trends more clearly. The PPO win rate grows steadily from ~55% to ~80%, while the critic MSE drops from 0.22 to ~0.12 — a 45% reduction over 200 updates, indicating the value function is progressively better at predicting game outcomes. The actor loss remains bounded within ±0.004 throughout, confirming the PPO clipping constraint is active and preventing policy collapse. For DQN, the Bellman residual drops ~6× from its peak at update 150, consistent with convergence toward Q*.
+
+### Policy Heatmap — Opening Move Preferences
+![Policy Heatmap](analysis_policy_heatmap.png)
+
+Visualising π(a|s) on the empty board reveals how each agent's learned strategy differs. PPO Curriculum converges to a near-deterministic opening (entropy H(π)=0.00), always playing a single preferred cell — evidence of a fully committed, confident strategy. PPO Baseline retains slightly more spread (H(π)=0.18), reflecting broader self-play exploration. The AlphaZero policy is more distributed (H(π)=1.23), consistent with an agent that has not converged to a strong opening strategy. The value estimate on the empty board V(s₀) also tells a clear story: PPO Curriculum (0.970) and PPO Baseline (1.424) both correctly estimate a winning advantage for the first player, while AlphaZero (−0.191) incorrectly believes it is losing from the start — a direct consequence of the corrupted value function from stochastic MCTS training.
+
+### DQN Q-Value Distribution
+![Q-Value Distribution](analysis_qvalue_distribution.png)
+
+The Q-value histograms across three board positions (empty board, mid-game, near-win) show a consistent and meaningful pattern. Valid actions (blue) cluster tightly at high Q-values (~2.4 on empty board, ~2.1 mid-game), while invalid actions (red) spread across negative values (−1.0 to 0.5). This clear bimodal separation confirms that the DQN has successfully learned to distinguish legal from illegal moves purely from game experience — without any explicit rule encoding. The max Q value decreases slightly from empty board (2.590) to near-win (2.174), reflecting the reduced future reward horizon as the game approaches termination.
+
 ## Discussion
 
 ### Why 50-55% Win Rate is Strong
