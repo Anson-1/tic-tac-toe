@@ -174,8 +174,10 @@ def run_human_vs_agent(model_path: str, human_player: int = 1, device: str = 'cp
 
 
 def run_agent_vs_heuristic(model_path: str, heuristic_name: str = 'blocking',
-                            agent_player: int = 1, delay: float = 0.5, device: str = 'cpu'):
+                            agent_player: int = 1, delay: float = 0.5, device: str = 'cpu',
+                            num_simulations: int = 0):
     from super_tictactoe.heuristics import greedy_agent, blocking_agent, safe_agent
+    from super_tictactoe.mcts import MCTS
     import random as _random
     import numpy as _np
 
@@ -198,6 +200,7 @@ def run_agent_vs_heuristic(model_path: str, heuristic_name: str = 'blocking',
     model = ActorCritic().to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
+    mcts = MCTS(model, device=device, num_simulations=num_simulations) if num_simulations > 0 else None
 
     heuristic_player = 3 - agent_player
 
@@ -245,6 +248,13 @@ def run_agent_vs_heuristic(model_path: str, heuristic_name: str = 'blocking',
             else:
                 wins['draw'] += 1
             game_n += 1
+            total = wins[agent_player] + wins[heuristic_player] + wins['draw']
+            ppo_wr  = 100 * wins[agent_player]  / total if total else 0
+            opp_wr  = 100 * wins[heuristic_player] / total if total else 0
+            agent_label = f"PPO+MCTS(sim={num_simulations})" if mcts else "PPO"
+            print(f"[Game {game_n:>4d}]  {agent_label}: {wins[agent_player]:>3d} ({ppo_wr:5.1f}%)  "
+                  f"{heuristic_name}: {wins[heuristic_player]:>3d} ({opp_wr:5.1f}%)  "
+                  f"Draw: {wins['draw']:>3d}")
             state = env.reset()
             last_placed  = None
             forfeit_cell = None
@@ -255,10 +265,13 @@ def run_agent_vs_heuristic(model_path: str, heuristic_name: str = 'blocking',
             intended_r, intended_c = None, None
 
             if env.current_player == agent_player:
-                action_mask  = torch.BoolTensor(env.get_action_mask()).to(device)
-                state_tensor = torch.FloatTensor(state).to(device)
-                with torch.no_grad():
-                    action, _, _ = model.get_action(state_tensor, action_mask)
+                if mcts:
+                    action = mcts.get_action(env)
+                else:
+                    action_mask  = torch.BoolTensor(env.get_action_mask()).to(device)
+                    state_tensor = torch.FloatTensor(state).to(device)
+                    with torch.no_grad():
+                        action, _, _ = model.get_action(state_tensor, action_mask)
             else:
                 action = heuristic(env)
 
@@ -507,7 +520,8 @@ if __name__ == '__main__':
     if args.mode == 'human':
         run_human_vs_agent(args.model1, args.human_player, num_simulations=args.simulations)
     elif args.mode == 'heuristic':
-        run_agent_vs_heuristic(args.model1, args.heuristic, args.agent_player, args.delay)
+        run_agent_vs_heuristic(args.model1, args.heuristic, args.agent_player, args.delay,
+                               num_simulations=args.simulations)
     elif args.mode == 'human_vs_heuristic':
         run_human_vs_heuristic(args.heuristic, args.human_player)
     else:

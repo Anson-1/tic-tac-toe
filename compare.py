@@ -120,6 +120,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Tournament: models vs heuristics")
     parser.add_argument('--games', type=int, default=200,
                         help='Games per matchup (split evenly as P1/P2)')
+    parser.add_argument('--simulations', type=int, default=200,
+                        help='MCTS simulations per move for PPO-curr+MCTS')
     parser.add_argument('--device', type=str, default='cpu')
     parser.add_argument('--out', type=str, default='tournament_results.png',
                         help='Output plot path')
@@ -161,7 +163,7 @@ if __name__ == '__main__':
         if mtype == 'dqn':
             agent = dqn_agent(model, device=args.device)
         elif mtype == 'mcts':
-            agent = mcts_agent_factory(model, device=args.device, num_simulations=25)
+            agent = mcts_agent_factory(model, device=args.device, num_simulations=args.simulations)
         else:
             agent = model_agent(model, device=args.device)
         results[model_name] = []

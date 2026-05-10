@@ -116,7 +116,7 @@ def train_alphazero(
     save_every: int = 10,
     eval_every: int = 10,
     init_from: str = '',
-    curriculum: bool = False,
+    curriculum: bool = True,
 ):
     os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -250,8 +250,9 @@ if __name__ == '__main__':
     parser.add_argument('--eval-every',   type=int,   default=10)
     parser.add_argument('--init-from',    type=str,   default='',
                         help='Optional: path to PPO checkpoint to warm-start from')
-    parser.add_argument('--curriculum', action='store_true',
-                        help='Enable curriculum learning (gradual stochasticity)')
+    parser.add_argument('--no-curriculum', action='store_false', dest='curriculum',
+                        help='Disable curriculum learning (on by default)')
+    parser.set_defaults(curriculum=True)
     args = parser.parse_args()
 
     train_alphazero(
@@ -265,5 +266,5 @@ if __name__ == '__main__':
         save_every=args.save_every,
         eval_every=args.eval_every,
         init_from=args.init_from,
-        curriculum=args.curriculum,
+        curriculum=args.curriculum,  # True by default
     )
