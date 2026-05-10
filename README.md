@@ -73,7 +73,7 @@ Reimplementation using the **TorchRL framework**:
 - `TensorDictReplayBuffer` for mini-batch sampling
 - Custom `EnvBase` wrapper (`SuperTicTacToeTorchEnv`)
 
-Trained against random opponents.
+Trained against random opponents only due to time and compute constraints — only 500 updates were run (vs 3000 for the custom PPO), with no curriculum learning applied. As shown by the PPO results, curriculum learning (opponent diversity + gradual stochasticity) is critical for generalising beyond random opponents; without it, agents fail to develop robust strategies against stronger heuristics.
 
 ### 6. TorchRL DQN (Bonus)
 
@@ -83,7 +83,7 @@ Value-based approach using TorchRL:
 - Epsilon-greedy exploration (1.0 → 0.05)
 - Curriculum opponents: random → greedy → blocking
 
-Trained against random opponents.
+Trained against random opponents only due to time and compute constraints — only 500 updates were run, with no curriculum learning applied. The contrast with PPO-curriculum highlights that curriculum learning and opponent diversity are the key factors driving strong performance in this stochastic game.
 
 ## Results
 
@@ -111,14 +111,17 @@ Tournament evaluation (200 games per matchup, playing both sides):
 ### PPO Baseline — Self-play Balance
 ![PPO Baseline](ppo_baseline/winrate.png)
 
-### PPO Curriculum — Win Rate Progression
-![PPO Curriculum](ppo_curriculum/ppo_progress.png)
+The chart shows P1 (blue) consistently winning 52-58% while P2 (red) wins 43-50% throughout all 3000 training updates, confirming a **first-mover advantage** in this game — P1 moves first and holds a small but persistent structural edge. This also validates the PPO self-play setup: both players use the same model, so any persistent imbalance reflects the game's inherent asymmetry rather than a training bug.
 
 ### TorchRL DQN — Training Curve
 ![TorchRL DQN](torchrl_dqn/checkpoints/phase0_random/training_curve.png)
 
+The DQN training curve shows two clear phases. The win rate increases monotonically from ~50% to ~90% against the random opponent, while the Q-loss (MSE of the Bellman residual) follows `L = E[(r + γ max_a' Q_target(s',a') - Q(s,a))²]`. The loss spikes to ~0.12 around update 100–150 as the replay buffer fills with increasingly diverse transitions (harder Bellman targets), then decreases steadily to ~0.02 by update 500 — roughly a **6× reduction** — indicating the Q-network is converging toward the fixed point of the Bellman operator. Since the Bellman operator is a γ-contraction in the sup-norm, convergence to Q* is guaranteed given sufficient capacity and exploration.
+
 ### TorchRL PPO — Training Curve
 ![TorchRL PPO](torchrl_ppo/checkpoints/phase0_random/training_curve.png)
+
+The PPO training curve shows three metrics. The win rate increases from ~50% to ~70% over 200 updates with high variance due to the small episode count per update. The actor loss oscillates tightly around zero with small magnitude (±0.004), which is expected — the PPO clipped surrogate objective constrains the probability ratio `r_t(θ) = π_θ(a|s) / π_θ_old(a|s)` to stay near 1, preventing large destructive updates. The critic loss decreases from ~0.25 to ~0.12 over training, reflecting the value network converging toward V^π(s) — still well above zero after 200 updates, consistent with the limited training budget.
 
 ## Discussion
 
@@ -140,6 +143,40 @@ Under these conditions, a 50-55% win rate against heuristics that also experienc
 - Build redundant threats (multiple partial lines that can each become winning)
 - Account for positional risk rather than solely optimising line completion
 
+### Addressing Sparse Rewards
+
+In this game, the only terminal reward is +1 (win) or −1 (loss), received at the end of a game that lasts ~13 steps on average. This creates a **sparse reward problem** — the agent receives no learning signal for the vast majority of transitions, making credit assignment difficult.
+
+We address this with two complementary techniques:
+
+**1. Potential-Based Reward Shaping (PBRS)**
+
+At each step, a shaping reward is added based on the change in a potential function Φ(s):
+
+```
+r_shaped = r_terminal + γ·Φ(s') - Φ(s)
+```
+
+where Φ(s) measures the longest unblocked line length (normalised to [0,1]) minus a defense-weighted opponent potential:
+
+```
+Φ(s) = Φ_own(s) - defense_weight × Φ_opp(s)
+```
+
+This gives the agent a dense signal at every step — building toward a win increases Φ and yields positive shaping reward, while allowing the opponent's lines to grow decreases it. Crucially, PBRS preserves the optimal policy of the original sparse-reward MDP (policy invariance theorem), so the agent is not misled toward suboptimal behaviour.
+
+**2. Defense Threat Penalty**
+
+During data collection, an additional penalty is applied whenever the opponent's board potential increases after their move:
+
+```
+penalty = −0.3 × max(0, Φ_opp(s') − Φ_opp(s))
+```
+
+This penalises the agent retroactively for allowing opponent threat growth, providing an explicit defensive learning signal that PBRS alone does not capture.
+
+Together these two mechanisms convert a sparse, end-of-game signal into a dense per-step reward that guides the agent toward both offensive line-building and defensive threat suppression throughout the game.
+
 ### Curriculum Learning vs Pure Self-Play
 
 PPO-baseline (pure self-play) learned to beat random opponents but developed narrow strategies that fail against focused heuristics. PPO-curriculum, trained against diverse opponents with gradually increasing stochasticity, developed generalised robust play. This demonstrates the importance of **opponent diversity** and **curriculum design** in RL for stochastic environments.
@@ -148,14 +185,12 @@ PPO-baseline (pure self-play) learned to beat random opponents but developed nar
 
 Standard MCTS assumes deterministic transitions: action A from state S always leads to state S'. In our game, the same action produces different outcomes due to stochastic placement, which corrupts the tree — child nodes accumulate statistics from inconsistent states, and UCB scores become meaningless.
 
-**Our solution:** use deterministic placement (`success_rate=1.0`) inside the search tree for planning, while the real game retains full stochasticity. This ensures:
+**The solution:** use deterministic placement (`success_rate=1.0`) inside the search tree for planning, while the real game retains full stochasticity. This ensures:
 1. Each child node consistently represents the same state (valid tree structure)
 2. UCB statistics are meaningful (comparing like with like)
 3. The model's value function handles uncertainty (trained on stochastic games)
 
 **Result:** PPO-curr+MCTS achieves 64% vs Blocking (+10% over raw PPO-curriculum) and 57% vs Horizontal. This demonstrates that tree search and learned value functions are complementary — search provides lookahead, while the value function accounts for stochastic risk.
-
-**Why AlphaZero still fails:** its model was trained via self-play using the stochastic (broken) MCTS, producing training targets from inconsistent tree statistics. The resulting value estimates are unreliable, and MCTS cannot compensate for a bad value function. Retraining with the fixed MCTS would likely improve it, but requires significant additional compute.
 
 ## Project Structure
 
